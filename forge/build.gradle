@@ -3,7 +3,7 @@ plugins {
 }
 
 base {
-	archivesName = "${rootProject.archives_base_name}-forge"
+	archivesName = "${rootProject.archives_base_name}-forge-${rootProject.minecraft_version}"
 }
 
 architectury {
