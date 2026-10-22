@@ -10,8 +10,10 @@ import mcmod.yfcorelib.api.event.PlayerRespawnEvent;
 import mcmod.yfcorelib.api.event.ServerStartedEvent;
 import mcmod.yfcorelib.api.event.ServerStoppingEvent;
 import mcmod.yfcorelib.api.event.ServerTickEvent;
+import mcmod.yfcorelib.common.command.YFCoreCommand;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
+import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -22,6 +24,8 @@ public final class ForgeLifecycleBridge {
 	}
 
 	public static void register(IEventBus bus) {
+		// 命令树与 Fabric 侧完全一致，仅注册时机不同
+		bus.addListener((RegisterCommandsEvent e) -> e.getDispatcher().register(YFCoreCommand.builder()));
 		bus.addListener((TickEvent.ServerTickEvent e) -> {
 			if (e.phase == TickEvent.Phase.END) {
 				YFCoreLib.scheduler(Side.SERVER).tick();

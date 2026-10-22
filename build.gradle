@@ -48,3 +48,31 @@ subprojects {
 		}
 	}
 }
+
+// 导入边界：api 零 MC/加载器依赖，common 零加载器依赖（编译通过不代表边界正确，故用源码扫描）
+def importBoundaries = [
+		api   : ~/(?m)^\s*import\s+net\.(minecraft|fabricmc|minecraftforge)\./,
+		common: ~/(?m)^\s*import\s+net\.(fabricmc|minecraftforge)\./
+]
+
+subprojects {
+	def banned = importBoundaries[name]
+	if (banned == null) {
+		return
+	}
+	tasks.register("checkImportBoundary") {
+		group = "verification"
+		description = "校验 ${name} 模块的 import 边界"
+		doLast {
+			def illegal = fileTree("src/main/java") {
+				include "**/*.java"
+			}.files.findAll { file -> banned.matcher(file.getText("UTF-8")).find() }
+			if (!illegal.isEmpty()) {
+				throw new GradleException("${name} 模块存在越界导入:\n" + illegal.collect { it.path }.join("\n"))
+			}
+		}
+	}
+	tasks.named("check").configure {
+		dependsOn "checkImportBoundary"
+	}
+}
