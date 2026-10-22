@@ -12,6 +12,8 @@ import mcmod.yfcorelib.api.config.SimpleConfigManager;
 import mcmod.yfcorelib.api.event.EventBus;
 import mcmod.yfcorelib.api.event.LifecycleQueue;
 import mcmod.yfcorelib.api.event.SimpleEventBus;
+import mcmod.yfcorelib.api.network.NetworkChannel;
+import mcmod.yfcorelib.api.network.NetworkProvider;
 import mcmod.yfcorelib.api.platform.Platform;
 import mcmod.yfcorelib.api.platform.Services;
 import mcmod.yfcorelib.api.scheduler.Scheduler;
@@ -29,6 +31,7 @@ public final class YFCoreLib {
 	private static final SimpleTimerStore SERVER_TIMERS =
 			new SimpleTimerStore(() -> SCHEDULERS.get(Side.SERVER).currentTick());
 	private static final Map<String, ConfigManager> CONFIGS = new ConcurrentHashMap<>();
+	private static final Map<String, NetworkChannel> CHANNELS = new ConcurrentHashMap<>();
 
 	private YFCoreLib() {
 	}
@@ -81,5 +84,15 @@ public final class YFCoreLib {
 	/** 已创建的配置管理器名集合（监控用） */
 	public static java.util.Set<String> configNames() {
 		return CONFIGS.keySet();
+	}
+
+	/**
+	 * 获取或创建网络通道：名称必须为 "命名空间:路径" 形式，同名重复调用返回同一实例。
+	 * <p>需在平台初始化阶段调用（通道注册有加载器时机要求），首次调用发现 NetworkProvider 实现。</p>
+	 */
+	public static NetworkChannel network(String name) {
+		return CHANNELS.computeIfAbsent(name, n ->
+				Services.load(NetworkProvider.class).orElseThrow(() -> new IllegalStateException(
+						"未找到 NetworkProvider 实现：请确认平台模块已注册 META-INF/services")).channel(n));
 	}
 }
