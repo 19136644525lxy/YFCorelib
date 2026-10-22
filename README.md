@@ -22,3 +22,7 @@ YF 系列模组共用的基础库，目标版本 Minecraft 1.20.1，支持 Fabri
 ```
 
 规划与验收标准见 `docs/`。
+
+## 许可
+
+Apache License 2.0，全文见 `LICENSE`。

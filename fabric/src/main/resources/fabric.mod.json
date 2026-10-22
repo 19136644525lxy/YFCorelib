@@ -5,7 +5,7 @@
 	"name": "YFCoreLib",
 	"description": "YF 模组公共基础库",
 	"authors": ["YF"],
-	"license": "CC0-1.0",
+	"license": "Apache-2.0",
 	"icon": "assets/yfcorelib/icon.png",
 	"environment": "*",
 	"entrypoints": {

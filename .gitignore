@@ -33,8 +33,11 @@ bin/
 run/
 
 # java
-
 hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+
+# 旧版本模板压缩包
+1.21.1/*.zip
+1.21.11/*.zip
