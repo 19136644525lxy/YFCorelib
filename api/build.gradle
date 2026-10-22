@@ -1,1 +1,15 @@
 // 纯 Java 模块：不应用 Loom，不依赖 MC 或加载器
+
+base {
+	archivesName = "${rootProject.archives_base_name}-api"
+}
+
+dependencies {
+	testImplementation platform("org.junit:junit-bom:5.10.2")
+	testImplementation "org.junit.jupiter:junit-jupiter"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+tasks.withType(Test).configureEach {
+	useJUnitPlatform()
+}

@@ -1,5 +1,7 @@
 package mcmod.yfcorelib.forge;
 
+import mcmod.yfcorelib.api.platform.Platform;
+import mcmod.yfcorelib.api.platform.Services;
 import mcmod.yfcorelib.core.CoreInfo;
 import net.minecraftforge.fml.common.Mod;
 import org.slf4j.Logger;
@@ -10,6 +12,8 @@ public final class YFCoreLibForge {
 	private static final Logger LOG = LoggerFactory.getLogger("yfcorelib");
 
 	public YFCoreLibForge() {
-		LOG.info("{} (forge)", CoreInfo.banner());
+		Platform platform = Services.platform();
+		LOG.info("{} | loader={} mc={} dev={}", CoreInfo.banner(),
+				platform.loaderName(), platform.mcVersion(), platform.isDevelopment());
 	}
 }
