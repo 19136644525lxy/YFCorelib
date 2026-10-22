@@ -9,7 +9,8 @@
 	"icon": "assets/yfcorelib/icon.png",
 	"environment": "*",
 	"entrypoints": {
-		"main": ["mcmod.yfcorelib.fabric.YFCoreLibFabric"]
+		"main": ["mcmod.yfcorelib.fabric.YFCoreLibFabric"],
+		"client": ["mcmod.yfcorelib.fabric.YFCoreLibClientFabric"]
 	},
 	"depends": {
 		"fabricloader": ">=0.15.0",

@@ -3,6 +3,7 @@ package mcmod.yfcorelib.forge;
 import mcmod.yfcorelib.api.platform.Platform;
 import mcmod.yfcorelib.api.platform.Services;
 import mcmod.yfcorelib.core.CoreInfo;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.Mod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,5 +16,6 @@ public final class YFCoreLibForge {
 		Platform platform = Services.platform();
 		LOG.info("{} | loader={} mc={} dev={}", CoreInfo.banner(),
 				platform.loaderName(), platform.mcVersion(), platform.isDevelopment());
+		ForgeLifecycleBridge.register(MinecraftForge.EVENT_BUS);
 	}
 }

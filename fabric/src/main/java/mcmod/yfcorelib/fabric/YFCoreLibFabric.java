@@ -15,5 +15,6 @@ public final class YFCoreLibFabric implements ModInitializer {
 		Platform platform = Services.platform();
 		LOG.info("{} | loader={} mc={} dev={}", CoreInfo.banner(),
 				platform.loaderName(), platform.mcVersion(), platform.isDevelopment());
+		FabricLifecycleBridge.register();
 	}
 }
