@@ -2,6 +2,7 @@ package mcmod.yfcorelib.fabric;
 
 import mcmod.yfcorelib.api.platform.Platform;
 import mcmod.yfcorelib.api.platform.Services;
+import mcmod.yfcorelib.common.core.TimerPersistence;
 import mcmod.yfcorelib.core.CoreInfo;
 import net.fabricmc.api.ModInitializer;
 import org.slf4j.Logger;
@@ -16,5 +17,6 @@ public final class YFCoreLibFabric implements ModInitializer {
 		LOG.info("{} | loader={} mc={} dev={}", CoreInfo.banner(),
 				platform.loaderName(), platform.mcVersion(), platform.isDevelopment());
 		FabricLifecycleBridge.register();
+		TimerPersistence.register();
 	}
 }
