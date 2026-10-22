@@ -1,0 +1,51 @@
+plugins {
+	id "architectury-plugin" version "3.4.164"
+	id "dev.architectury.loom" version "1.7.435" apply false
+}
+
+architectury {
+	minecraft = rootProject.minecraft_version
+}
+
+allprojects {
+	apply plugin: "java-library"
+	apply plugin: "maven-publish"
+
+	base { archivesName = rootProject.archives_base_name }
+	group = rootProject.maven_group
+	version = rootProject.mod_version
+
+	repositories {
+		maven { url = uri("https://maven.architectury.dev/") }
+		maven { url = uri("https://maven.fabricmc.net/") }
+		maven { url = uri("https://maven.minecraftforge.net/") }
+		mavenCentral()
+	}
+
+	java {
+		withSourcesJar()
+		sourceCompatibility = JavaVersion.VERSION_17
+		targetCompatibility = JavaVersion.VERSION_17
+	}
+
+	tasks.withType(JavaCompile).configureEach {
+		options.encoding = "UTF-8"
+		options.release.set(17)
+	}
+}
+
+subprojects {
+	if (name != "api") {
+		apply plugin: "architectury-plugin"
+		apply plugin: "dev.architectury.loom"
+
+		loom {
+			silentMojangMappingsLicense()
+		}
+
+		dependencies {
+			minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
+			mappings loom.officialMojangMappings()
+		}
+	}
+}
