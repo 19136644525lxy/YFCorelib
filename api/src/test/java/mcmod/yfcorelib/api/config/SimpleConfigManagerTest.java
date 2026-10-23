@@ -160,6 +160,44 @@ class SimpleConfigManagerTest {
 	}
 
 	@Test
+	void 无缺失键时迁移结果仍然落盘() {
+		write("test.json", """
+				{
+				  "__version": 1,
+				  "world": { "enabled": false, "temperature": 1.0 },
+				  "player": { "name": "steve", "level": 1, "exp": 0 }
+				}
+				""");
+		AtomicInteger runs = new AtomicInteger();
+		ConfigMigrator v1To2 = new ConfigMigrator() {
+			@Override
+			public int fromVersion() {
+				return 1;
+			}
+
+			@Override
+			public int toVersion() {
+				return 2;
+			}
+
+			@Override
+			public void migrate(ConfigNode node) {
+				runs.incrementAndGet();
+			}
+		};
+		SimpleConfigManager manager = new SimpleConfigManager(spec(), source(), v1To2);
+
+		assertTrue(manager.reload());
+		assertEquals(1, runs.get());
+		assertTrue(content("test.json").contains("\"__version\": 2"), "迁移版本号必须落盘");
+
+		// 新实例模拟重启：不得重复执行迁移
+		SimpleConfigManager second = new SimpleConfigManager(spec(), source(), v1To2);
+		assertTrue(second.reload());
+		assertEquals(1, runs.get(), "重启后不得重复迁移");
+	}
+
+	@Test
 	void set写入内存树并随save落盘() {
 		SimpleConfigManager manager = new SimpleConfigManager(spec(), source());
 		manager.reload();

@@ -98,8 +98,11 @@ public final class SimpleConfigManager implements ConfigManager {
 		int fileVersion = readVersion(file, fileExists);
 
 		boolean changed = mergeDefaults(file);
+		int versionBefore = fileVersion;
 		ensureVersionKey(file, fileVersion);
 		fileVersion = runMigrations(file, fileVersion);
+		// 迁移推进了版本号也必须落盘，否则下次 reload 会重复迁移
+		changed |= fileVersion != versionBefore;
 
 		data = file;
 		loadedVersion = fileVersion;
