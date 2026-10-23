@@ -18,3 +18,23 @@ dependencies {
 tasks.withType(Test).configureEach {
 	useJUnitPlatform()
 }
+
+publishing {
+	publications {
+		maven(MavenPublication) {
+			artifactId = "${rootProject.archives_base_name}-api"
+			from components.java
+			pom {
+				name = artifactId
+				description = "YFCoreLib 纯 Java 契约层"
+				url = "https://github.com/19136644525lxy/YFCorelib"
+				licenses {
+					license {
+						name = "Apache License 2.0"
+						url = "https://www.apache.org/licenses/LICENSE-2.0"
+					}
+				}
+			}
+		}
+	}
+}

@@ -31,6 +31,20 @@ allprojects {
 		options.encoding = "UTF-8"
 		options.release.set(17)
 	}
+
+	// 发布目标：GitHub Packages；凭据读 gradle.properties 的 gpr.user/gpr.key，或环境变量
+	publishing {
+		repositories {
+			maven {
+				name = "github"
+				url = uri("https://maven.pkg.github.com/19136644525lxy/YFCorelib")
+				credentials {
+					username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
+					password = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+				}
+			}
+		}
+	}
 }
 
 subprojects {
