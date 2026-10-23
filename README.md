@@ -36,7 +36,7 @@ gpr.user=GitHub 用户名
 gpr.key=具有 write:packages 权限的 PAT
 ```
 
-也支持环境变量 `GITHUB_ACTOR` / `GITHUB_TOKEN`（CI 用）。
+也支持环境变量 `GITHUB_ACTOR` / `GITHUB_TOKEN`（CI 用）。若设置了 `GRADLE_USER_HOME`，上述文件位于 `$GRADLE_USER_HOME/gradle.properties`。
 
 2. 执行发布：
 
