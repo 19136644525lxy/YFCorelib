@@ -32,6 +32,25 @@ class DataCodecsTest {
 				() -> DataCodecs.INTEGER.decode(new JsonPrimitive("text")));
 	}
 
+	@Test
+	void 类型不符必须抛异常而不是静默强转() {
+		// 旧实现会把 "1" 当 false、把 3.9 截成 3，调用方拿到的是错值而不是错误
+		assertThrows(IllegalArgumentException.class,
+				() -> DataCodecs.BOOLEAN.decode(new JsonPrimitive("1")));
+		assertThrows(IllegalArgumentException.class,
+				() -> DataCodecs.BOOLEAN.decode(new JsonPrimitive(1)));
+		assertThrows(IllegalArgumentException.class,
+				() -> DataCodecs.INTEGER.decode(new JsonPrimitive(3.9)));
+		assertThrows(IllegalArgumentException.class,
+				() -> DataCodecs.INTEGER.decode(new JsonPrimitive(true)));
+		assertThrows(IllegalArgumentException.class,
+				() -> DataCodecs.LONG.decode(new JsonPrimitive(1.5)));
+		assertThrows(IllegalArgumentException.class,
+				() -> DataCodecs.DOUBLE.decode(new JsonPrimitive("1.5")));
+		assertThrows(IllegalArgumentException.class,
+				() -> DataCodecs.STRING.decode(new JsonPrimitive(1)));
+	}
+
 	private static <T> T roundTrip(DataCodec<T> codec, T value) {
 		return codec.decode(JsonParser.parseString(codec.encode(value).toString()));
 	}

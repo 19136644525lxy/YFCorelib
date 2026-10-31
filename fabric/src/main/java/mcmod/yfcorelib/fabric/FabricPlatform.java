@@ -6,10 +6,26 @@ import java.util.Optional;
 import mcmod.yfcorelib.api.platform.ModInfo;
 import mcmod.yfcorelib.api.platform.Platform;
 import net.fabricmc.api.EnvType;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.storage.LevelResource;
 
 /** Fabric 平台实现：加载器 API 仅出现在本模块。 */
 public final class FabricPlatform implements Platform {
+	/** 当前服务器实例：由生命周期事件维护，用于解析存档目录 */
+	private static volatile MinecraftServer server;
+
+	static {
+		ServerLifecycleEvents.SERVER_STARTING.register(s -> server = s);
+		ServerLifecycleEvents.SERVER_STOPPED.register(s -> server = null);
+	}
+
+	@Override
+	public Optional<Path> worldDir() {
+		MinecraftServer current = server;
+		return current == null ? Optional.empty() : Optional.of(current.getWorldPath(LevelResource.ROOT));
+	}
 
 	@Override
 	public String loaderName() {

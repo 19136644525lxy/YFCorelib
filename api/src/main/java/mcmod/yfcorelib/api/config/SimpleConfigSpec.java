@@ -2,8 +2,10 @@ package mcmod.yfcorelib.api.config;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** ConfigSpec 的不可变实现 */
 public final class SimpleConfigSpec implements ConfigSpec {
@@ -66,6 +68,11 @@ public final class SimpleConfigSpec implements ConfigSpec {
 			return this;
 		}
 
+		<T> Builder define(ConfigKey<T> key) {
+			keys.add(key);
+			return this;
+		}
+
 		Builder comment(String path, String comment) {
 			comments.put(path, comment);
 			return this;
@@ -78,13 +85,24 @@ public final class SimpleConfigSpec implements ConfigSpec {
 
 		SimpleConfigSpec build() {
 			List<ConfigKey<?>> withComments = new ArrayList<>(keys.size());
+			Set<String> defined = new HashSet<>();
 			for (ConfigKey<?> key : keys) {
+				defined.add(key.path());
 				String comment = comments.get(key.path());
 				if (comment == null) {
 					withComments.add(key);
 				} else {
 					withComments.add(rebuildWithComment(key, comment));
 				}
+			}
+			// 注释挂在拼错的路径上会被静默丢弃，写配置时才发现"注释没生效"
+			for (String path : comments.keySet()) {
+				if (!defined.contains(path)) {
+					throw new IllegalArgumentException("注释指向未定义的配置键: " + path);
+				}
+			}
+			if (version < 0) {
+				throw new IllegalArgumentException("配置版本不能为负: " + version);
 			}
 			return new SimpleConfigSpec(name, version, withComments);
 		}

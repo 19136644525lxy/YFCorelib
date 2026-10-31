@@ -1,6 +1,7 @@
 package mcmod.yfcorelib.common.diagnostic;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,8 @@ import mcmod.yfcorelib.api.event.PlayerJoinEvent;
 import mcmod.yfcorelib.api.event.PlayerLeaveEvent;
 import mcmod.yfcorelib.api.event.PlayerRef;
 import mcmod.yfcorelib.api.event.SimpleEventBus;
+import mcmod.yfcorelib.api.mixin.MixinConfig;
+import mcmod.yfcorelib.api.mixin.MixinConfigValidator;
 import mcmod.yfcorelib.api.network.Packet;
 import mcmod.yfcorelib.api.network.PacketType;
 import mcmod.yfcorelib.api.network.SimpleChannelRegistry;
@@ -33,6 +36,9 @@ import mcmod.yfcorelib.api.scheduler.TickScheduler;
 import mcmod.yfcorelib.common.demo.DemoContent;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.LivingEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 运行时自检：以纯内存方式验证核心能力，任何异常都转为单条失败结果。
@@ -40,6 +46,11 @@ import net.minecraft.resources.ResourceLocation;
  */
 public final class SelfTest {
 	private static final String CONFIG_NAME = "yfcorelib-selftest";
+	private static final String MIXIN_CONFIG = "yfcorelib.mixins.json";
+	private static final String REFMAP = "yfcorelib.refmap.json";
+	/** {@code LivingEntityDeathMixin} 的 @Inject 处理器方法名，Mixin 会把它合并进目标类 */
+	private static final String MIXIN_HANDLER = "yfcorelib$firePlayerDeath";
+	private static final Logger LOG = LoggerFactory.getLogger(SelfTest.class);
 
 	public record Result(String name, boolean passed, String detail) {
 	}
@@ -54,6 +65,7 @@ public final class SelfTest {
 		results.add(guard("配置合并", SelfTest::config));
 		results.add(guard("玩家会话", SelfTest::session));
 		results.add(guard("网络编解码", SelfTest::network));
+		results.add(guard("Mixin 配置", SelfTest::mixinConfig));
 		if (YFCoreLib.platform().isDevelopment()) {
 			results.add(guard("注册 DSL", SelfTest::registrations));
 		}
@@ -67,7 +79,11 @@ public final class SelfTest {
 	private static Result guard(String name, Supplier<String> check) {
 		try {
 			return new Result(name, true, check.get());
-		} catch (RuntimeException | AssertionError e) {
+		} catch (RuntimeException | AssertionError | LinkageError e) {
+			// 光返回一句话不够排查：把完整堆栈写进日志，聊天栏只放摘要
+			LOG.error("自检项失败: {}", name, e);
+			// LinkageError 单独接住：类缺失（NoClassDefFoundError）正是自检最该报告的形态，
+			// 不能让它穿透成命令执行崩溃
 			return new Result(name, false, e.getClass().getSimpleName() + ": " + e.getMessage());
 		}
 	}
@@ -109,12 +125,11 @@ public final class SelfTest {
 
 	/** 补默认键不覆盖用户值、未知键保留、版本保持、写回可读 */
 	private static String config() {
+		ConfigKey<Boolean> enabled = ConfigKey.of("enabled", Boolean.class, true);
 		ConfigSpec spec = ConfigBuilder.create(CONFIG_NAME)
-				.define("enabled", Boolean.class, true)
+				.define(enabled)
 				.version(1)
 				.build();
-		@SuppressWarnings("unchecked")
-		ConfigKey<Boolean> enabled = (ConfigKey<Boolean>) spec.keys().get(0);
 
 		MemorySource source = new MemorySource();
 		source.write(CONFIG_NAME, "{\"__version\":1,\"enabled\":false,\"unknown\":7}");
@@ -158,6 +173,31 @@ public final class SelfTest {
 		ProbePacket decoded = type.codec().decode(type.codec().encode(new ProbePacket("回环")));
 		require("回环".equals(decoded.text()), "编解码结果不一致");
 		return "包类型注册与编解码回环通过（实际传输需联机验证）";
+	}
+
+	/** 本库自带的 Mixin 配置必须能在类路径上被解析，且声明的类真实存在 */
+	private static String mixinConfig() {
+		List<MixinConfigValidator.Problem> problems = MixinConfigValidator.validateLoadedConfig(MIXIN_CONFIG);
+		require(problems.isEmpty(), "配置存在问题: " + problems);
+		MixinConfig config = MixinConfigValidator.loadConfig(MIXIN_CONFIG, SelfTest.class.getClassLoader())
+				.orElseThrow(() -> new IllegalStateException("配置资源不在类路径上: " + MIXIN_CONFIG));
+		require(!config.allEntries().isEmpty(), "配置里没有声明任何 Mixin，属于空壳配置");
+		if (!YFCoreLib.platform().isDevelopment()) {
+			// 生产环境最容易静默失败的一环：refmap 没被构建回填进配置，
+			// 于是 @Inject(method = "die") 找不到 intermediary 名，Mixin 只是不生效、不报错
+			require(config.refmap() != null,
+					"配置缺少 refmap 字段：构建没有把 " + REFMAP + " 回填进 " + MIXIN_CONFIG
+							+ "，生产环境里 Mixin 不会生效（开发环境可忽略此条）");
+		}
+		// 配置写对了不等于注入生效：Mixin 会把 @Inject 的处理器方法合并进目标类，
+		// 所以直接看 LivingEntity 上有没有它——这是"真的注入上了"的唯一实证。
+		// 用 contains 而不是 equals：Mixin 合并处理器时会加 handler$<refmap>$ 前缀。
+		boolean injected = Arrays.stream(LivingEntity.class.getDeclaredMethods())
+				.anyMatch(method -> method.getName().contains(MIXIN_HANDLER));
+		require(injected, "没有在 LivingEntity 上找到注入方法 " + MIXIN_HANDLER
+				+ "：Mixin 没有生效（检查 " + MIXIN_CONFIG + " 是否被加载、refmap 是否可用）");
+		return config.allEntries().size() + " 个 Mixin 类声明有效且已注入（" + config.name()
+				+ "，refmap=" + (config.refmap() == null ? "<无>" : config.refmap()) + "）";
 	}
 
 	/** 开发环境：演示内容必须真实进入注册表 */

@@ -75,6 +75,10 @@ public final class JsonWorldDataStore<T> implements WorldDataStore<T> {
 	public void save() {
 		synchronized (lock) {
 			loadIfNeeded();
+			if (!dirty) {
+				// 没有修改就不写盘：否则每次自动保存都会产生一次全量序列化 + 备份
+				return;
+			}
 			JsonObject out = new JsonObject();
 			// LinkedHashMap 保持插入顺序，序列化稳定可 diff
 			data.forEach(out::add);
@@ -102,18 +106,17 @@ public final class JsonWorldDataStore<T> implements WorldDataStore<T> {
 		}
 		data = new LinkedHashMap<>();
 		String content = AtomicFiles.readWithFallback(file);
-		if (content == null || content.isBlank()) {
+		boolean mainUsable = content != null && !content.isBlank();
+		if (mainUsable && tryFill(content)) {
 			return;
 		}
-		if (tryFill(content)) {
-			return;
-		}
-		// 主文件内容损坏（中断截断的典型形态）：尝试从 .bak 恢复
+		// 主文件缺失、被截断成 0 字节或内容损坏：都可能还有可用的 .bak，
+		// 不先试备份就当作"新世界"，随后的 save 会把备份一起覆盖掉
 		String backup = AtomicFiles.readBackup(file);
-		if (backup != null && tryFill(backup)) {
-			LOG.warn("世界数据主文件内容损坏，已从 .bak 恢复: {}", file);
+		if (backup != null && !backup.isBlank() && tryFill(backup)) {
+			LOG.warn("世界数据主文件不可用，已从 .bak 恢复: {}", file);
 			dirty = true;
-		} else {
+		} else if (mainUsable) {
 			LOG.warn("世界数据损坏（含备份），已视为空表: {}", file);
 		}
 	}
@@ -123,6 +126,7 @@ public final class JsonWorldDataStore<T> implements WorldDataStore<T> {
 		try {
 			JsonElement parsed = JsonParser.parseString(content);
 			if (!parsed.isJsonObject()) {
+				LOG.debug("世界数据不是 JSON 对象: {}", file);
 				return false;
 			}
 			Map<String, JsonElement> filled = new LinkedHashMap<>();
@@ -130,6 +134,7 @@ public final class JsonWorldDataStore<T> implements WorldDataStore<T> {
 			data = filled;
 			return true;
 		} catch (RuntimeException e) {
+			LOG.debug("世界数据解析失败: {}", file, e);
 			return false;
 		}
 	}

@@ -14,6 +14,11 @@ architectury {
 loom {
 	forge {
 		convertAccessWideners = false
+		// Forge 侧声明 Mixin 配置的正确入口（Architectury Loom 文档 "Using Mixins"）。
+		// Loom 会把它写进开发环境的启动参数，以及产物 jar 的清单（MixinConfigs）。
+		// 只写在 mods.toml 里是不够的——那份字段 Forge 1.20.1 不解析，
+		// 症状就是"配置在 jar 里但从未被加载"，Mixin 静默不生效。
+		mixinConfig "yfcorelib.mixins.json"
 	}
 }
 

@@ -4,6 +4,9 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
+
+import java.util.Objects;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,6 +31,8 @@ public final class SimpleConfigManager implements ConfigManager {
 
 	private JsonObject data;
 	private int loadedVersion;
+	/** 上次 reload 是否整体失败：失败后禁止 save，避免用内存空树覆盖用户文件 */
+	private boolean loadFailed;
 
 	public SimpleConfigManager(ConfigSpec spec, ConfigSource source, ConfigMigrator... migrators) {
 		this.spec = spec;
@@ -54,6 +59,12 @@ public final class SimpleConfigManager implements ConfigManager {
 
 	@Override
 	public <T> void set(ConfigKey<T> key, T value) {
+		Objects.requireNonNull(key, "key");
+		if (value != null && !key.type().isInstance(value)) {
+			// 不拦的话会在写盘时变成别的 JSON 类型，下次 reload 又被当作"类型不符"换回默认值
+			throw new IllegalArgumentException("配置值类型与键声明不符: " + key.path()
+					+ " 声明 " + key.type().getSimpleName() + "，实际 " + value.getClass().getSimpleName());
+		}
 		synchronized (lock) {
 			requireLoaded();
 			node().set(key.path(), toJson(value));
@@ -64,11 +75,16 @@ public final class SimpleConfigManager implements ConfigManager {
 	public boolean reload() {
 		synchronized (lock) {
 			try {
+				loadFailed = false;
 				return doReload();
 			} catch (RuntimeException e) {
 				LOG.error("配置加载失败: {}", spec.name(), e);
+				loadFailed = true;
 				if (data == null) {
-					data = new JsonObject();
+					// 首次加载就失败：给内存一份纯默认树让 get 可用，同时由 loadFailed 阻止写回
+					JsonObject fallback = new JsonObject();
+					mergeDefaults(fallback);
+					data = fallback;
 					loadedVersion = spec.version();
 				}
 				return false;
@@ -80,6 +96,11 @@ public final class SimpleConfigManager implements ConfigManager {
 	public void save() {
 		synchronized (lock) {
 			requireLoaded();
+			if (loadFailed) {
+				// 加载失败时内存树不代表文件真实内容，写回会把用户配置整体清空
+				throw new IllegalStateException(
+						"配置加载失败，拒绝写回以免覆盖用户文件；请先排查来源并成功 reload(): " + spec.name());
+			}
 			source.write(spec.name(), GsonFormats.pretty(data));
 		}
 	}
@@ -99,10 +120,13 @@ public final class SimpleConfigManager implements ConfigManager {
 
 		boolean changed = mergeDefaults(file);
 		int versionBefore = fileVersion;
+		// 旧格式文件缺版本键时也要落盘，否则每次 reload 都会重复告警并重新判定迁移起点
+		boolean versionKeyMissing = file.get(VERSION_KEY) == null;
 		ensureVersionKey(file, fileVersion);
 		fileVersion = runMigrations(file, fileVersion);
 		// 迁移推进了版本号也必须落盘，否则下次 reload 会重复迁移
 		changed |= fileVersion != versionBefore;
+		changed |= versionKeyMissing;
 
 		data = file;
 		loadedVersion = fileVersion;
@@ -135,6 +159,11 @@ public final class SimpleConfigManager implements ConfigManager {
 		if (version != null && isPrimitive(version) && version.getAsJsonPrimitive().isNumber()) {
 			return version.getAsInt();
 		}
+		if (version != null) {
+			// 键在但类型不对（例如被手改成字符串）：直接按 0 处理会静默重跑迁移链，先让用户看见
+			LOG.warn("配置版本键类型不符，按版本 0 处理: {} 实际 {}", spec.name(), version);
+			return fileExists ? 0 : spec.version();
+		}
 		if (fileExists) {
 			// 旧格式文件缺少版本键：从 0 开始迁移
 			LOG.info("配置缺少版本键，按版本 0 处理: {}", spec.name());
@@ -161,7 +190,14 @@ public final class SimpleConfigManager implements ConfigManager {
 				LOG.error("迁移器执行失败: {} -> {}", next.fromVersion(), next.toVersion(), e);
 				break;
 			}
-			version = next.toVersion();
+			int nextVersion = next.toVersion();
+			if (nextVersion <= version) {
+				// 版本必须严格前进，否则 while 循环永不退出（在持有 lock 的情况下挂死服务端启动线程）
+				LOG.error("迁移器版本不前进，已中止以免死循环: {} -> {} ({})",
+						version, nextVersion, next.getClass().getName());
+				break;
+			}
+			version = nextVersion;
 			node(file).setNumber(VERSION_KEY, version);
 		}
 		if (version > spec.version()) {

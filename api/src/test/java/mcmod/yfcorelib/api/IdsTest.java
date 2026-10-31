@@ -1,6 +1,7 @@
 package mcmod.yfcorelib.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
 
@@ -14,5 +15,10 @@ class IdsTest {
 	@Test
 	void modIdShouldBeConstant() {
 		assertEquals("yfcorelib", Ids.MOD_ID);
+	}
+
+	@Test
+	void idShouldRejectNullPath() {
+		assertThrows(NullPointerException.class, () -> Ids.id(null));
 	}
 }

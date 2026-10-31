@@ -130,6 +130,9 @@ public final class ForgeNetworkChannel implements NetworkChannel {
 
 	/** 切主线程后按来源分发：带 sender 为服务器侧，否则为客户端侧 */
 	private <T extends Packet> void dispatch(PacketType<T> type, T packet, NetworkEvent.Context ctx) {
+		// 必须在 enqueueWork 之前标记：handler 抛异常时也要让 Forge 认为该包已处理，
+		// 否则会走"未处理包"路径（重复投递 / 记日志）
+		ctx.setPacketHandled(true);
 		ctx.enqueueWork(() -> {
 			try {
 				ServerPlayer sender = ctx.getSender();
@@ -145,7 +148,6 @@ public final class ForgeNetworkChannel implements NetworkChannel {
 				LOG.warn("处理网络包失败: {}", type.id(), e);
 			}
 		});
-		ctx.setPacketHandled(true);
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
@@ -173,7 +175,7 @@ public final class ForgeNetworkChannel implements NetworkChannel {
 
 	private static void requireDirection(PacketType<?> type, Side side, String op) {
 		boolean ok = switch (side) {
-			case SERVER -> type.receiver() == Side.SERVER;
+			case SERVER -> type.receiver() == Side.SERVER || type.receiver() == Side.COMMON;
 			case CLIENT -> type.receiver() == Side.CLIENT || type.receiver() == Side.COMMON;
 			default -> false;
 		};

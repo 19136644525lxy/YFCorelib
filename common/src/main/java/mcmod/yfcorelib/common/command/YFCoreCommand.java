@@ -20,11 +20,13 @@ public final class YFCoreCommand {
 	}
 
 	public static LiteralArgumentBuilder<CommandSourceStack> builder() {
+		// 整棵树是库的排障入口：info 会输出 loader/版本/dev 标志/配置名，
+		// 这些不该对普通玩家可见，因此根节点统一要权限 2
 		return LiteralArgumentBuilder.<CommandSourceStack>literal("yfcorelib")
+				.requires(source -> source.hasPermission(2))
 				.then(LiteralArgumentBuilder.<CommandSourceStack>literal("info")
 						.executes(context -> info(context.getSource())))
 				.then(LiteralArgumentBuilder.<CommandSourceStack>literal("selftest")
-						.requires(source -> source.hasPermission(2))
 						.executes(context -> selftest(context.getSource())));
 	}
 

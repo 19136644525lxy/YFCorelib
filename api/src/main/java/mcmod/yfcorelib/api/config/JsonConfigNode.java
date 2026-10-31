@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
@@ -26,21 +27,26 @@ public final class JsonConfigNode implements ConfigNode {
 
 	@Override
 	public boolean has(String path) {
-		return resolve(path).isPresent();
+		// JSON null 不算"有值"：调用方拿到 null 只会困惑
+		return resolve(path).filter(e -> !e.isJsonNull()).isPresent();
 	}
 
 	@Override
 	public Optional<String> getString(String path) {
-		return read(path).filter(JsonElement::isJsonPrimitive).map(e -> e.getAsString());
+		return read(path).filter(JsonElement::isJsonPrimitive)
+				.filter(e -> e.getAsJsonPrimitive().isString())
+				.map(JsonElement::getAsString);
 	}
 
 	/** 读取数值；类型不符返回 empty（不抛异常，由调用方决定兜底策略） */
+	@Override
 	public Optional<Double> getNumber(String path) {
 		return read(path).filter(JsonElement::isJsonPrimitive)
 				.filter(e -> e.getAsJsonPrimitive().isNumber())
 				.map(JsonElement::getAsDouble);
 	}
 
+	@Override
 	public Optional<Boolean> getBoolean(String path) {
 		return read(path).filter(JsonElement::isJsonPrimitive)
 				.filter(e -> e.getAsJsonPrimitive().isBoolean())
@@ -52,10 +58,12 @@ public final class JsonConfigNode implements ConfigNode {
 		set(path, new JsonPrimitive(value));
 	}
 
+	@Override
 	public void setNumber(String path, Number value) {
 		set(path, new JsonPrimitive(value));
 	}
 
+	@Override
 	public void setBoolean(String path, boolean value) {
 		set(path, new JsonPrimitive(value));
 	}
@@ -133,6 +141,17 @@ public final class JsonConfigNode implements ConfigNode {
 	}
 
 	private static String[] split(String path) {
-		return path.split("\\.");
+		Objects.requireNonNull(path, "path");
+		if (path.isEmpty()) {
+			throw new IllegalArgumentException("配置路径不能为空");
+		}
+		// limit = -1 保留尾部空段，好让 "a." 这类路径被下面的校验拦下
+		String[] segments = path.split("\\.", -1);
+		for (String segment : segments) {
+			if (segment.isEmpty()) {
+				throw new IllegalArgumentException("配置路径存在空段: '" + path + "'");
+			}
+		}
+		return segments;
 	}
 }

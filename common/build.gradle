@@ -6,6 +6,15 @@ architectury {
 	common(rootProject.enabled_platforms.split(","))
 }
 
+loom {
+	// common 自带 src/main/resources/yfcorelib.mixins.json，必须让 Loom 生成 refmap：
+	// 生产环境的类名是 intermediary（Fabric）/ SRG（Forge），没有 refmap 的
+	// @Inject(method = "die") 在正式包里找不到目标方法，Mixin 会静默不生效
+	mixin {
+		defaultRefmapName = "yfcorelib.refmap.json"
+	}
+}
+
 dependencies {
 	api project(":api")
 	modImplementation "net.fabricmc:fabric-loader:${rootProject.fabric_loader_version}"
@@ -26,6 +35,14 @@ publishing {
 						name = "Apache License 2.0"
 						url = "https://www.apache.org/licenses/LICENSE-2.0"
 					}
+				}
+				withXml {
+					// fabric-loader 与 architectury 只服务于构建期（Loom 转换 + Architectury 平台配置），
+					// common 源码零引用；写进 POM 会让下游在非 Loom 工程里被迫拉取加载器依赖
+					def leaked = asNode().dependencies.dependency.findAll {
+						["net.fabricmc", "dev.architectury"].contains(it.groupId.text())
+					}
+					leaked.each { it.replaceNode {} }
 				}
 			}
 		}

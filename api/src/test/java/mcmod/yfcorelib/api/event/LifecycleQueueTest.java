@@ -84,4 +84,69 @@ class LifecycleQueueTest {
 		queue.playerReady(ref("bob"));
 		assertEquals(List.of("bob"), fired);
 	}
+
+	@Test
+	void closedSubscriptionStopsFurtherDispatch() {
+		LifecycleQueue queue = new LifecycleQueue();
+		List<String> fired = new ArrayList<>();
+		EventBus.Subscription subscription = queue.addHook(player -> fired.add(player.name()));
+		queue.playerReady(ref("alice"));
+		subscription.close();
+		subscription.close(); // 可重复 close
+		queue.playerReady(ref("bob"));
+		assertEquals(List.of("alice"), fired);
+	}
+
+	@Test
+	void goneHookShouldBeNotified() {
+		LifecycleQueue queue = new LifecycleQueue();
+		List<String> gone = new ArrayList<>();
+		LifecycleHook hook = new LifecycleHook() {
+			@Override
+			public void onPlayerReady(PlayerRef player) {
+			}
+
+			@Override
+			public void onPlayerGone(PlayerRef player) {
+				gone.add(player.name());
+			}
+		};
+		queue.addHook(hook);
+		PlayerRef alice = ref("alice");
+		queue.playerReady(alice);
+		queue.playerGone(alice.id());
+		queue.playerGone(alice.id()); // 重复离场不重复通知
+		queue.playerGone(UUID.randomUUID()); // 从未上线过的玩家也不通知
+		assertEquals(List.of("alice"), gone);
+	}
+
+	@Test
+	void goneHookExceptionShouldNotBreakOthers() {
+		LifecycleQueue queue = new LifecycleQueue();
+		List<String> gone = new ArrayList<>();
+		queue.addHook(new LifecycleHook() {
+			@Override
+			public void onPlayerReady(PlayerRef player) {
+			}
+
+			@Override
+			public void onPlayerGone(PlayerRef player) {
+				throw new RuntimeException("boom");
+			}
+		});
+		queue.addHook(new LifecycleHook() {
+			@Override
+			public void onPlayerReady(PlayerRef player) {
+			}
+
+			@Override
+			public void onPlayerGone(PlayerRef player) {
+				gone.add(player.name());
+			}
+		});
+		PlayerRef alice = ref("alice");
+		queue.playerReady(alice);
+		queue.playerGone(alice.id());
+		assertEquals(List.of("alice"), gone);
+	}
 }

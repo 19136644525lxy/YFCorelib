@@ -28,6 +28,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,6 +55,13 @@ public final class FabricNetworkChannel implements NetworkChannel {
 	static {
 		ServerLifecycleEvents.SERVER_STARTING.register(server -> currentServer = server);
 		ServerLifecycleEvents.SERVER_STOPPED.register(server -> currentServer = null);
+		// 补上"本类加载晚于 SERVER_STARTING"的情况：只要之后还有 tick，
+		// 下一个 tick 就能把服务器引用补齐，而不是永久为 null
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			if (currentServer == null) {
+				currentServer = server;
+			}
+		});
 	}
 
 	private final SimpleChannelRegistry registry = new SimpleChannelRegistry();
@@ -194,7 +202,7 @@ public final class FabricNetworkChannel implements NetworkChannel {
 
 	private static void requireDirection(PacketType<?> type, Side side, String op) {
 		boolean ok = switch (side) {
-			case SERVER -> type.receiver() == Side.SERVER;
+			case SERVER -> type.receiver() == Side.SERVER || type.receiver() == Side.COMMON;
 			case CLIENT -> type.receiver() == Side.CLIENT || type.receiver() == Side.COMMON;
 			default -> false;
 		};
@@ -207,7 +215,9 @@ public final class FabricNetworkChannel implements NetworkChannel {
 	private static FriendlyByteBuf encode(PacketType type, Packet packet) {
 		String json = GSON.toJson(type.codec().encode(packet));
 		FriendlyByteBuf buf = new FriendlyByteBuf(io.netty.buffer.Unpooled.buffer());
-		buf.writeUtf(json);
+		// 必须显式传 MAX_PAYLOAD：writeUtf(String) 默认按 32767 截断，
+		// 与读端的 readUtf(MAX_PAYLOAD) 以及 Forge 侧 writeUtf(json, MAX_PAYLOAD) 不对称
+		buf.writeUtf(json, MAX_PAYLOAD);
 		return buf;
 	}
 

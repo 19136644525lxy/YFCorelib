@@ -7,8 +7,9 @@ import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 基于内部刻计数器的调度实现。
@@ -16,7 +17,7 @@ import java.util.logging.Logger;
  * 同刻到期任务按提交顺序执行，单个任务异常不影响本轮其他任务。</p>
  */
 public final class TickScheduler implements Scheduler {
-	private static final Logger LOG = Logger.getLogger(TickScheduler.class.getName());
+	private static final Logger LOG = LoggerFactory.getLogger(TickScheduler.class);
 	private static final Comparator<Task> BY_SEQ = Comparator.comparingLong(t -> t.seq);
 
 	private final CopyOnWriteArrayList<Task> tasks = new CopyOnWriteArrayList<>();
@@ -52,7 +53,8 @@ public final class TickScheduler implements Scheduler {
 
 	@Override
 	public ScheduledTask repeat(int periodTicks, Runnable task) {
-		return repeat(null, 0, periodTicks, task);
+		// 与 Scheduler#repeat 的契约一致：首次执行在 periodTicks 之后（delay=0 会在下一 tick 就执行）
+		return repeat(null, periodTicks, periodTicks, task);
 	}
 
 	@Override
@@ -83,7 +85,7 @@ public final class TickScheduler implements Scheduler {
 	}
 
 	@Override
-	public void tick() {
+	public synchronized void tick() {
 		currentTick++;
 		tickTickables();
 		runDueTasks();
@@ -91,14 +93,15 @@ public final class TickScheduler implements Scheduler {
 
 	private void tickTickables() {
 		for (Tickable t : tickables) {
-			if (t.isDone()) {
-				tickables.remove(t);
-				continue;
-			}
+			// isDone() 也必须纳入隔离：它是用户代码，抛出异常会中断整个 tick 并冒泡进平台刻回调
 			try {
+				if (t.isDone()) {
+					tickables.remove(t);
+					continue;
+				}
 				t.tick();
 			} catch (Throwable ex) {
-				LOG.log(Level.SEVERE, "Tickable 执行异常", ex);
+				LOG.error("Tickable 执行异常", ex);
 			}
 		}
 	}
@@ -130,7 +133,7 @@ public final class TickScheduler implements Scheduler {
 			try {
 				t.action.run();
 			} catch (Throwable ex) {
-				LOG.log(Level.SEVERE, "调度任务执行异常 seq=" + t.seq, ex);
+				LOG.error("调度任务执行异常 seq={}", t.seq, ex);
 			}
 			if (!t.cancelled.get() && t.periodTicks > 0) {
 				// 重复任务留在列表中，仅推进下次到期刻

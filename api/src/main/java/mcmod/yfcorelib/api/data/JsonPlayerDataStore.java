@@ -36,7 +36,18 @@ public final class JsonPlayerDataStore<T> implements PlayerDataStore<T> {
 
 	@Override
 	public T get(UUID player) {
-		return cache.computeIfAbsent(player, this::readFromDisk);
+		T cached = cache.get(player);
+		if (cached != null) {
+			return cached;
+		}
+		// 不在 computeIfAbsent 里做磁盘 IO：CHM 的桶锁会被整段 IO 占住，
+		// 同桶其他玩家（甚至同一玩家的其他线程）全部阻塞
+		T loaded = readFromDisk(player);
+		if (loaded == null) {
+			return null;
+		}
+		T prev = cache.putIfAbsent(player, loaded);
+		return prev != null ? prev : loaded;
 	}
 
 	@Override
@@ -63,7 +74,10 @@ public final class JsonPlayerDataStore<T> implements PlayerDataStore<T> {
 			return;
 		}
 		if (AtomicFiles.writeAtomic(file(player), GsonIo.toJson(codec.encode(value)))) {
-			dirty.remove(player);
+			// 写盘期间可能被 set 成新值：此时不能清 dirty，否则新值永远不会落盘
+			if (cache.get(player) == value) {
+				dirty.remove(player);
+			}
 		}
 	}
 
@@ -82,7 +96,17 @@ public final class JsonPlayerDataStore<T> implements PlayerDataStore<T> {
 	@Override
 	public void unload(UUID player) {
 		if (dirty.contains(player)) {
-			save(player);
+			try {
+				save(player);
+			} catch (RuntimeException e) {
+				LOG.error("玩家数据保存失败，保留缓存以免丢数据: {}", player, e);
+				return;
+			}
+			if (dirty.contains(player)) {
+				// writeAtomic 返回 false 时 save 不会清 dirty：同样不能丢内存
+				LOG.error("玩家数据落盘失败，保留缓存以免丢数据: {}", player);
+				return;
+			}
 		}
 		cache.remove(player);
 		dirty.remove(player);

@@ -2,7 +2,7 @@ package mcmod.yfcorelib.fabric;
 
 import mcmod.yfcorelib.api.Side;
 import mcmod.yfcorelib.api.YFCoreLib;
-import mcmod.yfcorelib.api.event.ServerTickEvent;
+import mcmod.yfcorelib.api.event.ClientTickEvent;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
@@ -14,7 +14,7 @@ public final class YFCoreLibClientFabric implements ClientModInitializer {
 		FabricNetworkChannel.activateClient();
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			YFCoreLib.scheduler(Side.CLIENT).tick();
-			YFCoreLib.events().post(new ServerTickEvent(Side.CLIENT));
+			YFCoreLib.events().post(new ClientTickEvent());
 		});
 	}
 }

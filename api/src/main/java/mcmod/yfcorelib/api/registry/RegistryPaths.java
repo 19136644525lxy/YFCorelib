@@ -25,6 +25,17 @@ public final class RegistryPaths {
 		if (path == null || !PATH.matcher(path).matches()) {
 			throw new IllegalArgumentException("非法注册路径：'" + path + "'，仅允许小写字母、数字、_ . - /");
 		}
+		// 字符集允许 "/" 与 "."，但它们能拼出 "a/../b"、"a//b"、"/a" 这类会跳出命名空间的路径
+		if (path.startsWith("/") || path.endsWith("/") || path.contains("//")) {
+			throw new IllegalArgumentException(
+					"非法注册路径：'" + path + "'，不得以 / 开头或结尾，也不得包含 //");
+		}
+		for (String segment : path.split("/")) {
+			if (segment.equals(".") || segment.equals("..")) {
+				throw new IllegalArgumentException(
+						"非法注册路径：'" + path + "'，不得包含 . 或 .. 路径段");
+			}
+		}
 		return path;
 	}
 }

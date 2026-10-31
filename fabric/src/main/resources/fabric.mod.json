@@ -8,14 +8,15 @@
 	"license": "Apache-2.0",
 	"icon": "assets/yfcorelib/icon.png",
 	"environment": "*",
+	"mixins": ["yfcorelib.mixins.json"],
 	"entrypoints": {
 		"main": ["mcmod.yfcorelib.fabric.YFCoreLibFabric"],
 		"client": ["mcmod.yfcorelib.fabric.YFCoreLibClientFabric"]
 	},
 	"depends": {
 		"fabricloader": ">=0.15.0",
-		"minecraft": "~1.20.1",
+		"minecraft": "1.20.1",
 		"java": ">=17",
-		"fabric-api": "*"
+		"fabric-api": ">=0.92.0"
 	}
 }

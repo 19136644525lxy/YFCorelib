@@ -5,13 +5,22 @@ import java.util.Optional;
 
 import mcmod.yfcorelib.api.platform.ModInfo;
 import mcmod.yfcorelib.api.platform.Platform;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.loading.FMLEnvironment;
 import net.minecraftforge.fml.loading.FMLPaths;
+import net.minecraftforge.server.ServerLifecycleHooks;
 
 /** Forge 平台实现：加载器 API 仅出现在本模块。 */
 public final class ForgePlatform implements Platform {
+
+	@Override
+	public Optional<Path> worldDir() {
+		MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+		return server == null ? Optional.empty() : Optional.of(server.getWorldPath(LevelResource.ROOT));
+	}
 
 	@Override
 	public String loaderName() {

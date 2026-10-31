@@ -2,6 +2,7 @@ package mcmod.yfcorelib.api.scheduler;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -65,5 +66,22 @@ class SimpleTimerStoreTest {
 		SimpleTimerStore timers = new SimpleTimerStore(() -> 42);
 		timers.set("k", 0);
 		assertEquals(0, timers.remaining("k"));
+	}
+
+	@Test
+	void negativeTicksShouldBeRejected() {
+		// 旧实现用 Math.max(0, ticks) 静默钳成 0，表现为"设了却立刻到期"，很难查
+		SimpleTimerStore timers = new SimpleTimerStore(() -> 42);
+		assertThrows(IllegalArgumentException.class, () -> timers.set("k", -1));
+		assertFalse(timers.keys().contains("k"));
+	}
+
+	@Test
+	void hugeTicksShouldSaturateInsteadOfOverflowing() {
+		SimpleTimerStore timers = new SimpleTimerStore(() -> 100);
+		timers.set("k", Long.MAX_VALUE);
+		// deadline 溢出成负数会让 remaining 立刻变 0
+		assertTrue(timers.remaining("k") > 0);
+		assertTrue(timers.keys().contains("k"));
 	}
 }

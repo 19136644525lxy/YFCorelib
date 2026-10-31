@@ -205,10 +205,10 @@ import mcmod.yfcorelib.api.Side;
 
 | 方法 | 返回 | 说明 |
 | --- | --- | --- |
-| `MOD_ID` | `String` | 常量 `"yfcorelib"` |
+| `MOD_ID` | `String` | 常量 `"yfcorelib"`，与 `Ids.MOD_ID` 同源 |
 | `platform()` | `Platform` | 当前加载器环境（ServiceLoader 缓存） |
 | `events()` | `EventBus` | 全局事件总线 |
-| `scheduler(Side)` | `Scheduler` | 指定侧的刻调度器 |
+| `scheduler(Side)` | `Scheduler` | 指定侧的刻调度器；传入 `Side.COMMON` 立刻抛 `IllegalArgumentException` |
 | `timers()` | `TimerStore` | 服务端刻级命名计时器 |
 | `lifecycle()` | `LifecycleQueue` | 玩家就绪钩子队列 |
 | `config(ConfigSpec, ConfigMigrator...)` | `ConfigManager` | 按 spec 名缓存单例，首次创建时自动 `reload()` |
@@ -234,7 +234,7 @@ public final class MyMod {
 
 ### 4.3 设计要点
 
-- `scheduler(Side.COMMON)` 实例**存在但不会被驱动**，它是为"无侧别语义的纯逻辑"预留的占位，不要指望它自动跑。需要执行请用 `SERVER` 或 `CLIENT`。
+- `scheduler(Side.COMMON)` **会直接抛 `IllegalArgumentException`**。COMMON 没有刻驱动来源，若照常受理任务，任务会静默永不执行——这是最难排查的故障类型，因此改为创建即失败。无侧别语义的纯逻辑请自行计算，或显式选择 `SERVER` / `CLIENT`。
 - `config(spec)` 是"按名去重"的：同名 spec 第二次调用返回第一次的实例，后续传入的 migrator 会被忽略。因此配置定义应当是**静态常量**，在模组初始化期一次性创建。
 - `network(name)` 同理按名缓存。名字必须形如 `命名空间:路径`，格式非法的名字会在创建时立刻抛错。
 
@@ -304,10 +304,12 @@ public interface EventBus {
 | --- | --- | --- |
 | `ServerStartedEvent` | 无 | 服务端启动完成 |
 | `ServerStoppingEvent` | 无 | 服务端开始停止（存档保存前） |
-| `ServerTickEvent` | `Side side` | 每刻；服务端 `Side.SERVER`，客户端 `Side.CLIENT` |
+| `ServerTickEvent` | 无 | 每服务端刻末尾一次（服务端主线程） |
+| `ClientTickEvent` | 无 | 每客户端刻末尾一次（客户端主线程） |
 | `PlayerJoinEvent` | `PlayerRef player` | 玩家进入服务端 |
 | `PlayerLeaveEvent` | `PlayerRef player` | 玩家断开 |
-| `PlayerRespawnEvent` | `PlayerRef player, boolean endPortal` | 玩家重生；`endPortal` 表示经末地折跃门返回 |
+| `PlayerDeathEvent` | `PlayerRef player` | 玩家死亡瞬间（由本库自带的 Mixin 在 `LivingEntity#die` 头部触发，仅服务端玩家；此时实体尚未被移除） |
+| `PlayerRespawnEvent` | `PlayerRef player, boolean endPortal` | 玩家重生；`endPortal` 表示经末地折跃门返回（两端都取自"活着被重置"这一标志：Fabric 用 `AFTER_RESPAWN` 的 `alive`，Forge 用 `isEndConquered()`） |
 | `PlayerDimensionChangeEvent` | `PlayerRef player, String from, String to` | 跨维度；维度 id 形如 `minecraft:overworld` |
 
 `PlayerRef` 是 api 层的玩家引用，只暴露 `id()`、`name()`、`isOnline()`，不持有 MC 实体。需要实体时由业务在自己的平台分支里用 `UUID` 反查。
@@ -328,7 +330,7 @@ sub.close();
 
 1. **精确类型匹配**：`register(FooEvent.class, ...)` 只接收 `FooEvent` 实例。若 `BarEvent extends FooEvent`，`post(new BarEvent())` **不会**触发 `FooEvent` 的监听器。这是刻意的——避免子类事件误触发父类逻辑。
 2. **同步执行**：`post` 在调用线程上按注册顺序依次执行监听器。总线内部只保证"注册表线程安全"，不保证"监听器异步"。
-3. **异常隔离**：单个监听器抛 `Throwable` 会被捕获并记录 SEVERE，后续监听器照常执行。这保证一个业务 bug 不会中断整条链路。
+3. **异常隔离**：单个监听器抛 `Throwable` 会被捕获并记录 error 日志，后续监听器照常执行。这保证一个业务 bug 不会中断整条链路。
 4. **无优先级**：按注册顺序执行。若需要顺序控制，由业务在单个监听器内部编排。
 
 ### 6.5 自定义事件
@@ -444,11 +446,16 @@ timers.set(key, 600);   // 30 秒
 
 `common` 模块的 `TimerPersistence` 已把持久化挂到事件总线上：
 
-- 文件位置：`<gameDir>/data/yfcorelib/timers.json`
+- 文件位置：`<存档目录>/data/yfcorelib/timers.json`（每个存档各一份）
+- 退回路径：没有运行中的服务器时（例如只做纯逻辑单测）退回 `<gameDir>/data/yfcorelib/timers.json` 并 warn
+- 迁移：若存档目录下没有该文件、而旧的 `gameDir` 路径存在，则读一次旧文件，下次保存自然写到存档目录
 - 写入方式：`AtomicFiles.writeAtomic`（临时文件 + 原子移动）
 - 恢复时机：`ServerStartedEvent`
 - 保存时机：`ServerStoppingEvent` + 每 6000 刻自动保存一次
 - 损坏条目：单条解析失败跳过并 warn，不影响其他条目
+- 写盘失败：记录 error 日志，本次保存内容丢弃（不会假装成功）
+
+> 存档目录来自 `Platform.worldDir()`（api 层默认返回 `Optional.empty()`，两端平台实现都已提供）。若你要自己放存档内数据，优先用这个方法，而不是 `gameDir()`。
 
 平台模块在入口各调用一次 `TimerPersistence.register()`，方法**幂等**，双端重复调用安全。业务无需任何额外操作。
 
@@ -466,31 +473,39 @@ timers.set(key, 600);   // 30 秒
 
 | 方法 | 说明 |
 | --- | --- |
-| `addHook(LifecycleHook hook)` | 注册就绪钩子；**对当前已就绪的在线玩家立即补发** |
+| `addHook(LifecycleHook hook)` | 注册就绪钩子；**对当前已就绪的在线玩家立即补发**；返回 `EventBus.Subscription`，`close()` 后不再触发 |
 | `playerReady(PlayerRef player)` | 标记玩家就绪并触发全部钩子（平台调用） |
-| `playerGone(UUID id)` | 玩家离线，清除在线标记（平台调用） |
+| `playerGone(UUID id)` | 玩家离线，清除在线标记并调用钩子的 `onPlayerGone`（平台调用；重复调用不重复通知） |
 
 ```java
 public interface LifecycleHook {
     void onPlayerReady(PlayerRef player);
+
+    /** 默认空实现：用于释放按玩家维度的资源 */
+    default void onPlayerGone(PlayerRef player) {
+    }
 }
 ```
 
 ### 9.2 使用
 
 ```java
-YFCoreLib.lifecycle().addHook(player -> {
+EventBus.Subscription hook = YFCoreLib.lifecycle().addHook(player -> {
     // 此时玩家已完成初始同步，可以安全下发数据
     syncEngine.onJoin(player.id());
     playerDataStore.get(player.id());
 });
+
+// 模块卸载、界面销毁时退订，避免全局队列长期持有已废弃对象
+hook.close();
 ```
 
 ### 9.3 语义
 
 - 钩子按注册顺序执行，单个钩子异常被捕获记录，不影响其他钩子。
 - `addHook` 会遍历内部在线集合补发——因此"先登录后注册钩子"和"先注册钩子后登录"结果一致，业务无需关心初始化顺序。
-- `playerReady` 会先把玩家写入在线集合再分发，保证钩子内部查询 `online()` 一致。
+- `addHook` 返回订阅句柄，`close()` 后该钩子不再触发，可重复 `close()`。
+- `playerReady` 会先把玩家登记进在线集合再分发，保证钩子在触发时该玩家已是"在线"状态。
 - 平台侧在玩家加入后延迟 1 刻调用 `playerReady`（原因见[第 3 节](#3-初始化时序)），离线时调用 `playerGone`。
 
 ---
@@ -516,34 +531,33 @@ YFCoreLib.lifecycle().addHook(player -> {
 
 仅支持五种标量：`String`、`Boolean`、`Integer`、`Long`、`Double`。其它类型在 `ConfigKey` 构造时直接抛 `IllegalArgumentException`。
 
+路径同样在构造时校验：空路径、`a..b` 这类空段都会立即抛错；**默认值类型必须与声明类型一致**（声明 `Integer` 却给 `"abc"` 会当场抛错，而不是等下一次 reload 才变成"类型不符已替换"的告警）。
+
 **为什么限制类型**：配置后端是 JSON 标量，限死类型才能保证"读出来的类型"与"声明类型"一一对应，避免运行时出现 `Integer` 被当成 `Long` 的隐性错误。复杂结构请拆成多个标量键，或用 `JsonElement` 自行管理（推荐前者）。
 
 ### 10.3 定义配置
 
+推荐把键声明成常量，再交给 builder——这样读的时候不用做类型强转，路径也不会散落在各处：
+
 ```java
 public final class MyConfig {
+    public static final ConfigKey<Boolean> ENABLED =
+            ConfigKey.of("enabled", Boolean.class, true, "总开关");
+    public static final ConfigKey<Double> RADIUS =
+            ConfigKey.of("radius", Double.class, 8.0, "作用半径（格）");
+    public static final ConfigKey<String> MODE =
+            ConfigKey.of("mode", String.class, "normal");
+
     public static final ConfigSpec SPEC = ConfigBuilder.create("mymod")
             .version(2)
-            .define("enabled", Boolean.class, true)
-            .comment("enabled", "总开关")
-            .define("radius", Double.class, 8.0)
-            .comment("radius", "作用半径（格）")
-            .define("mode", String.class, "normal")
+            .define(ENABLED)
+            .define(RADIUS)
+            .define(MODE)
             .build();
-
-    public static final ConfigKey<Boolean> ENABLED = key("enabled");
-    public static final ConfigKey<Double> RADIUS = key("radius");
-    public static final ConfigKey<String> MODE = key("mode");
-
-    @SuppressWarnings("unchecked")
-    private static <T> ConfigKey<T> key(String path) {
-        return (ConfigKey<T>) SPEC.keys().stream()
-                .filter(k -> k.path().equals(path))
-                .findFirst()
-                .orElseThrow();
-    }
 }
 ```
+
+也可以用 `define(path, type, defaultValue)` 内联声明，再用 `comment(path, text)` 补注释；两种写法产出的 `ConfigSpec` 完全等价，`define(ConfigKey)` 只是省掉了事后按路径反查键的那一步。
 
 `ConfigSpec.keys()` 按定义顺序返回，索引稳定，也可以直接按下标取。
 
@@ -562,10 +576,10 @@ cfg.reload();                                  // 重新读盘并合并
 
 | 方法 | 说明 |
 | --- | --- |
-| `get(ConfigKey<T>)` | 读取当前值；未加载或类型不符返回默认值 |
-| `set(ConfigKey<T>, T)` | 写入内存树，**不落盘** |
-| `reload()` | 从来源重读、补默认、执行迁移；返回是否成功 |
-| `save()` | 内存树写回来源（原子写） |
+| `get(ConfigKey<T>)` | 读取当前值；类型不符返回默认值，尚未成功加载时抛 `IllegalStateException` |
+| `set(ConfigKey<T>, T)` | 写入内存树，**不落盘**；值类型与键声明不符抛 `IllegalArgumentException` |
+| `reload()` | 从来源重读、补默认、执行迁移；返回是否成功。失败后内存退回默认值并禁止 `save()` |
+| `save()` | 内存树写回来源（原子写）；上次 `reload()` 失败时抛 `IllegalStateException`，避免覆盖用户文件 |
 | `loadedVersion()` | 当前已加载版本（迁移后为目标版本） |
 
 `YFCoreLib.config(spec)` 首次调用会自动 `reload()`，所以业务拿到即可读。
@@ -630,6 +644,8 @@ ConfigManager cfg = YFCoreLib.config(MyConfig.SPEC, new V1ToV2());
 
 **迁移器编写约束**：`migrate` 接收的是底层节点，**不得假设目标版本的新键已经存在**——补默认键发生在迁移之前，但迁移器可能删除了键。所有读取都必须走 `orElse` 兜底。
 
+搬动数字/布尔值时**必须**用 `node.getNumber(...)` / `node.setNumber(...)` / `node.getBoolean(...)` / `node.setBoolean(...)`，不要图省事用 `getString`/`setString`：后者会把 `25` 读成 `"25"` 再写成 JSON 字符串，下次加载时该键因"类型不符"被默认值整体替换——迁移看起来成功，配置却悄悄丢了。
+
 ### 10.8 自定义 ConfigSource
 
 `ConfigSource` 只有两个方法：
@@ -682,6 +698,17 @@ public interface DataCodec<T> {
 | `DataCodecs.DOUBLE` | `Double` |
 | `DataCodecs.BOOLEAN` | `Boolean` |
 | `DataCodecs.RAW` | `JsonElement`（深拷贝透传） |
+
+内置编解码器是**严格**的：类型不符一律抛 `IllegalArgumentException`，不做静默强转。
+
+| 输入 | 结果 |
+| --- | --- |
+| `BOOLEAN.decode("1")` / `BOOLEAN.decode(1)` | 抛错（不会当成 `false`） |
+| `INTEGER.decode(3.9)` | 抛错（不会截断成 `3`） |
+| `INTEGER.decode(true)` / `STRING.decode(1)` | 抛错 |
+| `DOUBLE.decode("1.5")` | 抛错 |
+
+严格的价值：静默强转会把"数据坏了"变成"业务算错了"，后者的排查成本高一个数量级。需要宽松语义请自己写 `DataCodec`。
 
 自定义对象示例：
 
@@ -917,7 +944,9 @@ public final class SyncRequestCodec implements DataCodec<SyncRequest> {
 }
 ```
 
-传输格式是 **UTF 字符串形式的 JSON**，单包上限 1,000,000 字符（`MAX_PAYLOAD`）。超限的包在接收侧读取时抛错并被捕获，不会拖垮连接，但会导致该包丢失。**大块数据请拆包或改用分片协议**。
+传输格式是 **UTF 字符串形式的 JSON**，单包上限 1,000,000 字符（`MAX_PAYLOAD`），**写端与读端使用同一上限，Fabric 与 Forge 行为一致**。超限时发送侧序列化即抛 `EncoderException`；接收侧解码失败只丢该包并记录 warn，不会拖垮连接。**大块数据请拆包或改用分片协议**。
+
+> **编解码器必须是纯函数**：`codec().decode` 在两端都可能运行在网络线程上（Forge 在 Netty 线程解码后才切主线程，Fabric 在主线程解码），因此 `encode`/`decode` 内**不得访问世界、注册表或任何需要主线程的状态**。`PacketHandler.handle` 一定在主线程执行，业务逻辑放这里。
 
 ### 13.4 注册与收发
 
@@ -943,7 +972,7 @@ channel.register(REQUEST);
 | --- | --- |
 | `Side.SERVER` | 客户端发给服务端 |
 | `Side.CLIENT` | 服务端发给客户端 |
-| `Side.COMMON` | 双向 |
+| `Side.COMMON` | 双向（`sendToServer` 与各种 S→C 方法都允许） |
 
 ### 13.5 发送方法
 
@@ -955,7 +984,7 @@ channel.register(REQUEST);
 | `sendToNear(dimension, x, y, z, radius, Packet)` | S→C | 指定维度内半径范围内的玩家 |
 | `isRegistered(PacketType<?>)` | — | 判断具体类型是否已注册 |
 
-方向不符会抛 `IllegalArgumentException`，例如对 `receiver=SERVER` 的包调用 `broadcast`。
+方向不符会抛 `IllegalArgumentException`，例如对 `receiver=SERVER` 的包调用 `broadcast`。`receiver=COMMON` 的包两个方向都允许。
 
 ```java
 // 服务端
@@ -1033,13 +1062,14 @@ if (!LIMITER.tryAcquire("mymod:request:" + sender)) {
 }
 ```
 
-- `tryAcquire` 是原子的（`compute` + `AtomicInteger`），多线程安全。
+- `tryAcquire` 是原子的（窗口判定与计数都在同一个 `compute` 里），多线程安全。
+- 窗口用 `System.nanoTime()` 计时，不会因为系统时钟回拨而永远不过期。
 - 窗口过期后自动开新窗口。
 - **必须定期 `sweep()`**，否则过期的 key 会永久留在 map 里，构成内存泄漏。挂到每 200 刻执行一次即可：
 
 ```java
 YFCoreLib.events().register(ServerTickEvent.class, e -> {
-    if (e.side() == Side.SERVER && serverTicks % 200 == 0) LIMITER.sweep();
+    if (++serverTicks % 200 == 0) LIMITER.sweep();
 });
 ```
 
@@ -1106,7 +1136,7 @@ YFCoreLib.events().register(PlayerLeaveEvent.class, e -> sync.onLeave(e.player()
 
 // 每刻驱动
 YFCoreLib.events().register(ServerTickEvent.class, e -> {
-    if (e.side() == Side.SERVER) sync.tick();
+    sync.tick();
 });
 ```
 
@@ -1219,6 +1249,8 @@ Fabric 下 `isPresent()` 恒为 `true`，因此**不要在业务里用 `isPresen
 | `asItem()` | 物品实例（`Optional`） |
 
 `block()` 内部先声明方块，再用 `() -> new BlockItem(blockRef.get(), ...)` 声明物品。这个 supplier 在**注册阶段**才被调用，因此 Forge 下也是安全的——这是自动配 BlockItem 能同时兼容两端的关键。
+
+> 这个前提依赖 Forge 先处理 `BLOCK` 的 `RegisterEvent` 再处理 `ITEM` 的顺序（当前 1.20.1 上成立，但属于未文档化的实现细节）。若上游改了顺序，`blockRef.get()` 会在注册期抛 NPE 直接打挂加载。需要绝对稳妥时，改为显式用 `RegistrationRef` 保存 `BlockItem` 自行注册，把对注册顺序的依赖掌握在自己手里。
 
 ### 15.6 完整示例
 
@@ -1362,6 +1394,9 @@ snapshot.restoreBase(player, Attributes.MAX_HEALTH, "transform", savedBase);
 | `ids()` | 有序 id 集合 |
 | `freeze()` | 冻结，之后拒绝写操作 |
 | `isFrozen()` | 是否已冻结 |
+| `addListener(RegistryListener)` | 注册监听器（`SimpleRegistry` 独有，不在 `Registry` 接口里） |
+| `removeListener(RegistryListener)` | 退订，返回是否移除成功（`SimpleRegistry` 独有） |
+| `untag(String id, String tag)` | 解除标签并清理空标签条目，返回是否移除成功（`SimpleRegistry` 独有；冻结后抛错） |
 
 ### 17.2 使用
 
@@ -1387,7 +1422,9 @@ List<ElementType> offensive = elements.byTag("offensive");
 
 ### 17.3 语义
 
-- 写操作（`register`/`tag`/`freeze`）持 `ReentrantLock`，保证"冲突检测 + 顺序追加"原子。
+- 写操作（`register`/`tag`/`untag`/`freeze`）持 `ReentrantLock`，保证"冲突检测 + 顺序追加"原子。
+- `map` 与顺序被打包成同一个不可变快照一起替换：读线程不会看到"`get()` 有值但 `values()` 缺项"的中间态。
+- 监听器在**锁外**回调，监听器里再调 `register`/`freeze` 不会死锁；监听器抛异常被捕获记 error，不影响注册结果。
 - 读操作返回不可变快照（`List.copyOf` / `Set.copyOf`），可安全在遍历中注册。
 - 监听器回调异常被捕获记录，不影响注册流程。
 - `tag` 需要 id 已存在，否则抛 `IllegalArgumentException`；同一 tag 重复添加会被 `addIfAbsent` 去重。
@@ -1403,6 +1440,7 @@ List<ElementType> offensive = elements.byTag("offensive");
 ```java
 Ids.MOD_ID;          // "yfcorelib"
 Ids.id("core");      // "yfcorelib:core"
+Ids.id(null);        // 抛 NullPointerException
 ```
 
 ### 18.2 RegistryPaths
@@ -1413,11 +1451,14 @@ Ids.id("core");      // "yfcorelib:core"
 RegistryPaths.requireNamespace("mymod");      // 通过
 RegistryPaths.requireNamespace("MyMod");      // 抛错：仅允许小写字母、数字、_ . -
 RegistryPaths.requirePath("ruby_sword");      // 通过
+RegistryPaths.requirePath("magic/ruby");      // 通过：允许子目录
 RegistryPaths.requirePath("mymod:ruby");      // 抛错：路径不得含冒号
+RegistryPaths.requirePath("magic/../ruby");   // 抛错：不得含 .. 路径段
+RegistryPaths.requirePath("/ruby");           // 抛错：不得以 / 开头或结尾，也不得含 //
 ```
 
 - 命名空间：`[a-z0-9_.-]+`
-- 路径：`[a-z0-9_./-]+`
+- 路径：`[a-z0-9_./-]+`，且额外拒绝 `/` 首尾、`//`、`.`/`..` 路径段（否则能拼出跳出命名空间的路径）
 
 提前校验的价值：错误 id 若拖到注册事件才暴露，堆栈里全是加载器代码，且通常一次只报一条，逐个排查成本极高。
 
@@ -1426,6 +1467,8 @@ RegistryPaths.requirePath("mymod:ruby");      // 抛错：路径不得含冒号
 ```java
 UUID id = SnapshotIds.stable("mymod", "speed_bonus");
 ```
+
+`modId` 不得含冒号：`"a:b" + "c"` 与 `"a"` + `"b:c"` 会拼出同一字符串，进而算出同一个 UUID。
 
 ### 18.4 AtomicFiles
 
@@ -1438,6 +1481,224 @@ UUID id = SnapshotIds.stable("mymod", "speed_bonus");
 ### 18.6 DataCodecs
 
 见[第 11.1 节](#111-datacodec)。
+
+### 18.7 数学与随机（`mcmod.yfcorelib.api.math`）
+
+M5 第一批：全部是纯 Java、零 MC 依赖的工具，可直接在 `api` 层单测，也可脱离 Minecraft 使用。
+
+**Easing**：把归一化进度映射成插值系数。输入始终先夹紧到 `[0,1]`（`NaN` 归零），因此调用方不必自己 clamp。
+
+```java
+Easing.LINEAR.apply(0.25);          // 0.25
+Easing.EASE_IN_CUBIC.apply(-1);     // 0.0，越界输入被夹紧
+Easing.EASE_OUT_BACK.apply(0.8);    // > 1，回弹曲线会短暂越过 1
+Easing.reverse(Easing.EASE_IN_QUAD); // 等价于 EASE_OUT_QUAD
+Easing.EASE_OUT_CUBIC.interpolate(0, 100, 0.5); // 87.5
+```
+
+内置：`LINEAR`、`EASE_IN/OUT/IN_OUT_QUAD`、`EASE_IN/OUT/IN_OUT_CUBIC`、`EASE_IN/OUT/IN_OUT_SINE`、`EASE_IN_EXPO`、`EASE_OUT_EXPO`、`EASE_OUT_BACK`，以及组合器 `reverse` / `inOut`。
+
+> `EASE_OUT_BACK` 的输出可以大于 1。插值到"必须落在 [0,1]"的场合（例如颜色分量）要自己再夹紧。
+
+**Color**：不可变、四分量 0–255，带 `0xAARRGGBB` 互转。
+
+```java
+Color c = Color.argb(0x80FF8000);
+c.toArgb();                    // 0x80FF8000
+c.toHex();                     // "#FF8000"
+c.toHexArgb();                 // "#80FF8000"
+Color.WHITE.lerp(Color.BLACK, 0.5); // 中灰
+Color.of(100, 200, 50).scale(2);    // 分量夹紧到 255，alpha 不变
+new Color(0, 0, 0, 256);       // 抛 IllegalArgumentException
+```
+
+**Rng**：可复现随机源。**不要**在模组里到处 `new Random()` —— 种子不确定就没法复现玩家报的 bug。
+
+```java
+Rng rng = Rng.of(seed);
+rng.nextInt(10);               // [0,10)
+rng.nextInt(-3, 4);            // [-3,4)
+rng.derive("combat:damage");   // 派生独立子序列：同名可复现，不同名互不干扰
+Rng.of(worldSeed, "loot", "chest");  // 一次性混合多个名字片段
+Rng.at(worldSeed, 16, 64);     // 按方块坐标派生：同一坐标永远同一序列
+```
+
+`derive` 之间互不影响的意义：A 功能多取一个数，不会让 B 功能的随机结果整体错位。
+
+**WeightedTable**：加权抽取，构造后不可变，抽取是 O(log n)（权重前缀和 + 二分）。
+
+```java
+WeightedTable<String> loot = WeightedTable.<String>create()
+        .add("common", 70)
+        .add("rare", 25)
+        .add("legendary", 5)
+        .build();
+
+loot.pick(rng);                // Optional<String>
+loot.pickOr(rng, "nothing");
+loot.totalWeight();            // 100
+```
+
+权重必须为正数（`0` 或负数抛 `IllegalArgumentException`）；空表合法，`pick` 返回 `Optional.empty()`；权重总和超过 `Integer.MAX_VALUE` 在 `build()` 时抛 `ArithmeticException`。
+
+**Noise**：二维 Perlin 梯度噪声，输出归一到 `[-1,1]`，构造后只读、可跨线程共享。
+
+```java
+Noise noise = new Noise(worldSeed);
+double h = noise.noise2(x * 0.01, z * 0.01);
+double terrain = noise.fbm2(x * 0.005, z * 0.005, 4);        // 4 层，倍频 2、衰减 0.5
+double custom = noise.fbm2(x, z, 6, 2.5, 0.35);
+```
+
+`octaves < 1`、`lacunarity`/`gain` 非正数或无穷都会抛 `IllegalArgumentException`。目前只有 2D；3D 噪声不在本批范围。
+
+### 18.8 反射缓存（`mcmod.yfcorelib.api.util.ReflectionCache`）
+
+只有在**确实没办法**时用：第三方模组可选 API、缺少编译期依赖的软兼容。自己的代码优先走正常调用。
+
+```java
+Field field = ReflectionCache.field(Abilities.class, "walkingSpeed");
+Object value = ReflectionCache.read(abilityInstance, "walkingSpeed");
+ReflectionCache.write(abilityInstance, "walkingSpeed", 1.5);
+Object result = ReflectionCache.invoke(instance, "apply", arg1, arg2);
+```
+
+关键设计：**查找失败时抛带候选名单的异常**。
+
+```
+在 net.example.Abilities 上找不到字段 'walkSpeed'。可用候选: walkingSpeed, flyingSpeed, ...
+```
+
+拼错成员名是反射最常见的 bug，裸 `NoSuchFieldException` 只说"找不到"，看不出来是拼写问题。另外若名字形如 `field_1472` / `f_12345_`，异常消息会额外提示"该名字形似混淆名，应改用 official mapping 下的名字"。
+
+- 查找会走父类链，找到后 `setAccessible(true)` 并缓存（同类同名字段只解析一次）
+- `findField` / `findMethod` 返回 `Optional`，不抛异常
+- `invoke` 按"实参个数 + 实参类型可赋值"选重载；`null` 实参不参与类型匹配
+- 被调用方法抛出的异常会作为 `cause` 包装进 `IllegalStateException`，不会被吞掉
+- `ReflectionCache.clear()` 清缓存，供热重载与单测隔离
+
+### 18.9 Mixin 回调与配置自检（`mcmod.yfcorelib.api.mixin`）
+
+本库自带**一个**生产 Mixin（`mcmod.yfcorelib.mixin.LivingEntityDeathMixin`，配置在 `yfcorelib.mixins.json`），它只做一件事：在玩家死亡瞬间发 `PlayerDeathEvent`。除此之外本库不再注入任何原版方法——这一节提供的是自己写 Mixin 时的基建。
+
+本库的接线位置，可作为你自己的模组照抄的模板：
+
+| 位置 | 内容 |
+| --- | --- |
+| `common/src/main/resources/yfcorelib.mixins.json` | `package` = `mcmod.yfcorelib.mixin`，`mixins` 列出生产 Mixin；**源码里不写 `refmap` 字段** |
+| `common/build.gradle` | `loom { mixin { defaultRefmapName = "yfcorelib.refmap.json" } }`——由 Loom 的注解处理器生成 refmap 并回填到打包后的配置里 |
+| `fabric.mod.json` | `"mixins": ["yfcorelib.mixins.json"]` |
+| `forge/build.gradle` | `loom { forge { mixinConfig "yfcorelib.mixins.json" } }`——Forge 侧必须走这条，Loom 会把它写进开发启动参数与产物 jar 的清单 |
+| `mods.toml` | **不要**写 `[[mixins]]`：Forge 1.20.1 不解析这个字段，写了不报错也不生效（这是本库踩过的坑） |
+| `/yfcorelib selftest` | 第 6 项「Mixin 配置」用本节的 `MixinConfigValidator` 自检 |
+
+refmap 是这一步唯一容易静默失败的地方：类名在生产包里是 intermediary（Fabric）/ SRG（Forge），没有 refmap 的 `@Inject(method = "die")` 找不到目标，Mixin 只是**不生效**而不报错。所以打包后请确认 jar 里的 `yfcorelib.mixins.json` 含 `refmap` 字段。
+
+另一个同样静默的坑是**配置根本没被加载**：`yfcorelib.mixins.json` 躺在 jar 里、解析起来毫无问题，但对应加载器没收到声明，于是 `@Inject` 从未发生、也没有任何报错。判断方法不要靠"看起来对不对"，而是看目标类上有没有注入方法——`/yfcorelib selftest` 就是这么做的。
+
+**① `MixinCallbacks`：Mixin 里只转发，不写业务**
+
+```java
+// Mixin 侧：只发现时机、组事件
+@Inject(method = "tick", at = @At("HEAD"))
+private void yfcorelib$onTick(CallbackInfo ci) {
+    MixinCallbacks.fire(new EntityTickEvent(this));
+}
+
+// 业务侧：普通监听器，可单测
+YFCoreLib.events().register(EntityTickEvent.class, event -> { ... });
+// 或
+EventBus.Subscription sub = MixinCallbacks.on(EntityTickEvent.class, event -> { ... });
+```
+
+为什么强制这么分工：Mixin 代码跑在别人的方法体里，直接写业务会导致**异常冒进原版方法**、无法单测、多个模组注入同一位置时互相踩。
+
+- `fire(Object)` 转给全局事件总线；监听器异常由总线隔离，**不会**冒回 Mixin
+- `setEnabled(false)` 可整体关掉转发（排查用）
+- 早于库初始化触发的回调会被丢弃并**只警告一次**——在别人的方法体里抛异常代价太高
+- 事件类型建议用具名 `record`，因为事件总线按**精确类型**分发
+
+**② `MixinConfigValidator`：启动时确认配置写的东西是真的**
+
+```java
+for (MixinConfigValidator.Problem problem : MixinConfigValidator.validateLoadedConfig("mymod.mixins.json")) {
+    LOG.error("Mixin 配置问题: {}", problem);
+}
+```
+
+它防的是三类静默事故：
+
+| 检查项 | 防的事故 |
+| --- | --- |
+| 声明的 Mixin 类能否加载 | 配置里写了个不存在的类，真正的 Mixin 反而忘了注册 |
+| `refmap` 资源是否存在 | 声明了 refmap 但构建没生成，混淆环境下 Mixin 静默失效 |
+| 是否整份配置为空壳 | 以为注册了，其实一条都没有 |
+
+另外会报告：同一 Mixin 在 `mixins`/`client`/`server` 之间重复声明、`plugin` 类不存在。
+
+- `validate` 返回**全部**问题的 `List<Problem>`，从不抛异常；解析失败也变成一个 `Problem`
+- 类存在性检查**只查 `.class` 资源，不 `Class.forName`**：Fabric/Forge 的类加载器会把"加载 Mixin 类"交给 Mixin 自己准备，一旦那一步失败抛出的却是 `Mixin transformation of ... failed`，恰好把"这个类根本不存在"这句真正的问题埋掉。确实想加载时用 `validate(config, loader, lookup, true)`
+- 只想解析不想校验时用 `MixinConfigParser.parse(name, json)`
+
+### 18.10 软依赖与能力注册（`mcmod.yfcorelib.api.interop`）
+
+**`SoftDependency`**：判断别的模组在不在，从而决定要不要启用可选功能。
+
+```java
+if (SoftDependency.isLoaded("curios")) { ... }
+if (SoftDependency.allLoaded("create", "flywheel")) { ... }
+Optional<ModInfo> info = SoftDependency.info("curios");
+```
+
+判定逻辑可注入，便于单测：`SoftDependency.allLoaded(probe, "a", "b")`。
+
+> 软依赖的正确用法是"先探测，再通过反射或独立适配类访问对方 API"。在 `@Mod` 构造器里直接引用对方类那就是硬依赖，对方不在就崩。
+
+**`CapabilityRegistry`**：按 `CapabilityKey` 存放"某项能力的实现"，供调用方按需取用。
+
+```java
+CapabilityKey<EnergyStorage> ENERGY = CapabilityKey.of("mylib:energy", EnergyStorage.class);
+
+SimpleCapabilityRegistry registry = new SimpleCapabilityRegistry();
+registry.register(ENERGY, myImplementation);
+
+Optional<EnergyStorage> storage = registry.get(ENERGY);   // 没装扩展时为空
+```
+
+与 §17 的 `Registry` 的区别：Registry 管**游戏内内容**（物品、方块，带 id 顺序与标签），本类管**接口实现**，不参与内容注册，查询失败是常态，因此返回 `Optional`。
+
+- 同一 id 重复注册抛 `IllegalStateException`（静默覆盖只会把问题推到运行期）
+- 用不同类型查同一 id 抛 `IllegalArgumentException`
+- 并发安全，注册后不可替换
+
+### 18.11 文本度量与折行（`mcmod.yfcorelib.api.text`）
+
+**`TextMeasure`**：把"这段字占多宽、要折几行"抽成接口，因而折行与布局计算可以脱离游戏单测。
+
+```java
+TextMeasure measure = new FontTextMeasure(Minecraft.getInstance().font);   // common 模块提供
+int w = measure.width("Hello");
+TextLayout layout = TextLayout.of(measure, subtitle, 240);                 // 先折行再算包围盒
+for (String line : layout.lines()) { ... }
+int boxWidth = layout.width(), boxHeight = layout.height();
+```
+
+**`TextLayout`**：折行结果 + 包围盒（`lines` / `width` / `height` 三个只读分量），HUD 侧直接拿去算居中或背景框：
+
+| 成员 | 说明 |
+| --- | --- |
+| `TextLayout.of(measure, text, maxWidth)` | 折行 + 算包围盒；`maxWidth <= 0` 抛 `IllegalArgumentException` |
+| `TextLayout.of(measure, lines)` | 已知分行，只算包围盒（不折行） |
+| `lines()` / `lineCount()` / `isEmpty()` | 结果访问 |
+| `width()` | 所有行里的最大宽度 |
+| `height()` | 行数 × `measure.lineHeight()` |
+
+**`FontTextMeasure`（common）**：基于原版 `Font`，折行直接交给 `Font#split`，因此宽度计算与 CJK 断行都与原版一致。
+
+- 但 `Font#split` 返回的是 `FormattedCharSequence`（带样式），而 `TextMeasure` 返回 `String`，所以**每一行会被拍平成纯文本，样式（颜色/粗体）会丢失**；需要保留样式时不要走这个接口，直接调 `Font#split`
+- **仅客户端可用**：它引用了 `net.minecraft.client.gui.Font`，专用服务器上加载会抛错，请只在 `Screen`/HUD 渲染路径里构造
+- `wrap` 只按像素宽度折行，**不处理原文里的 `\n`**；需要保留显式换行时先按 `\n` 切分，再对每段分别折行
+- `api` 里的 `TextMeasure` 本身是纯 Java，自用位图字体时可自己实现（只要求每行宽度不超过 `maxWidth`，必要时该行至少放 1 个字符，否则会死循环）
 
 ---
 
@@ -1466,7 +1727,7 @@ UUID id = SnapshotIds.stable("mymod", "speed_bonus");
 3. **Forge 下不要在构造期取 `RegistrationRef` 的值**。
 4. **玩家离线必须回收缓存**：`PlayerDataStore.unload`、`PlayerSessionStore`（自动）、`SyncEngine.onLeave`、`AttributeModifierSnapshot.clear`。
 5. **限流器必须 `sweep()`**，否则 key 无限增长。
-6. **事件监听器要退订**：页面/模块销毁时 `Subscription.close()`，否则全局总线会长期持有已废弃对象。
+6. **事件监听器与生命周期钩子都要退订**：页面/模块销毁时 `Subscription.close()`，否则全局总线与就绪队列会长期持有已废弃对象。
 
 ### 19.3 异常处理原则
 
@@ -1488,10 +1749,12 @@ UUID id = SnapshotIds.stable("mymod", "speed_bonus");
 
 | 命令 | 权限 | 作用 |
 | --- | --- | --- |
-| `/yfcorelib info` | 无 | 输出版本横幅、加载器、MC 版本、配置列表、计时器数量 |
-| `/yfcorelib selftest` | 等级 2 | 运行六项运行时自检并逐条输出 PASS/FAIL |
+| `/yfcorelib info` | 等级 2 | 输出版本横幅、加载器、MC 版本、配置列表、计时器数量 |
+| `/yfcorelib selftest` | 等级 2 | 运行运行时自检并逐条输出 PASS/FAIL（发布环境六项，开发环境追加注册 DSL 项） |
 
-示例输出：
+> 整棵命令树都要求等级 2：它是库的排障入口，`info` 会输出 loader 版本、dev 标志与配置名集合，不适合对普通玩家暴露。
+
+示例输出（开发环境，含 dev 专属的注册 DSL 项）：
 
 ```
 YFCoreLib core=yfcorelib:core
@@ -1503,6 +1766,7 @@ YFCoreLib 自检：全部通过
 [PASS] 配置合并 - 默认合并、用户值保留、未知键保留与写回均通过
 [PASS] 玩家会话 - 加入创建、在线集合与离开回收均通过
 [PASS] 网络编解码 - 包类型注册与编解码回环通过（实际传输需联机验证）
+[PASS] Mixin 配置 - 1 个 Mixin 类声明有效且已注入（yfcorelib.mixins.json，refmap=yfcorelib.refmap.json）
 [PASS] 注册 DSL - 演示物品与方块均已注册，方块物品自动生成
 ```
 
@@ -1515,7 +1779,10 @@ YFCoreLib 自检：全部通过
 | 配置合并 | 用户值不被默认值覆盖、未知键保留、写回可读 |
 | 玩家会话 | 加入创建、在线集合、离开回收 |
 | 网络编解码 | 类型注册 + encode/decode 回环 |
+| Mixin 配置 | 本库自带的 `yfcorelib.mixins.json` 能解析、声明的 Mixin 类真实存在、不是空壳配置（生产环境还要求配置里有 `refmap` 字段）；并且 `LivingEntity` 上能找到注入方法 `yfcorelib$firePlayerDeath`，证明注入真的生效了 |
 | 注册 DSL | 仅 dev：演示物品/方块进入 `BuiltInRegistries`，方块自动带 BlockItem |
+
+> 前六项在所有环境运行；最后一项只在开发环境（`platform().isDevelopment()`）注册演示内容时才可能通过，发布环境会跳过该项。
 
 自检全部是纯内存操作，不写磁盘、不发网络包，可以随时在线上服务器执行。
 
@@ -1544,7 +1811,7 @@ YFCoreLib 自检：全部通过
 1. `PacketType.receiver` 是否为 `CLIENT` 或 `COMMON`。
 2. 通道上的 `register(...)` 是否在发送前完成。
 3. 客户端入口是否已激活（专用服务器不会注册 S2C 接收器，属正常）。
-4. 包体是否超过 1,000,000 字符上限——超限会在接收侧解码失败并 warn。
+4. 包体是否超过 1,000,000 字符上限——超限会在**发送侧**抛 `EncoderException`（Fabric 与 Forge 上限一致）。
 
 ### Q4：事件监听器没被触发？
 
@@ -1599,6 +1866,9 @@ mcmod.yfcorelib.api
 │   ├── LifecycleQueue / LifecycleHook
 │   ├── PlayerRef
 │   └── Server*/Player* 事件
+├── interop/             软依赖与能力
+│   ├── SoftDependency
+│   └── CapabilityKey / CapabilityRegistry / SimpleCapabilityRegistry
 ├── network/             网络
 │   ├── Packet / PacketType / PacketHandler / PacketContext
 │   ├── NetworkChannel / NetworkProvider / SimpleChannelRegistry
@@ -1611,14 +1881,27 @@ mcmod.yfcorelib.api
 ├── scheduler/           调度
 │   ├── Scheduler / TickScheduler / ScheduledTask / Tickable
 │   └── TimerStore / SimpleTimerStore
-└── sync/                快照同步
-    ├── SyncEngine / SimpleSyncEngine
+├── sync/                快照同步
+│   └── SyncEngine / SimpleSyncEngine
+├── math/                数学与随机
+│   ├── Easing / Color
+│   ├── Rng / SimpleRng / Rngs
+│   └── WeightedTable / Noise
+├── mixin/               Mixin 基建
+│   ├── MixinCallbacks
+│   ├── MixinConfig / MixinConfigParser
+│   └── MixinConfigValidator
+├── text/                文本度量
+│   └── TextMeasure / TextLayout
+└── util/                反射工具
+    └── ReflectionCache
 
 mcmod.yfcorelib.common
 ├── attribute/AttributeModifierSnapshot
 ├── registry/            内容注册 DSL
 │   ├── YFRegistries / ContentNamespace / Registrar / AbstractRegistrar
 │   ├── RegistrationRef / RegistrarFactory / BlockEntry
+├── text/FontTextMeasure 基于原版 Font（仅客户端）
 ├── core/TimerPersistence
 ├── command/YFCoreCommand
 ├── diagnostic/SelfTest

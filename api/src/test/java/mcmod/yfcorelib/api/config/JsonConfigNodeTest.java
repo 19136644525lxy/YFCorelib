@@ -52,4 +52,26 @@ class JsonConfigNodeTest {
 
 		assertFalse(node.has("a.b"));
 	}
+
+	@Test
+	void 通过接口也能读写数字与布尔() {
+		// 迁移器拿到的是 ConfigNode 接口：带类型的读写必须在接口上，否则只能退化成字符串搬运
+		ConfigNode node = new JsonConfigNode(new JsonObject());
+		node.setNumber("max", 40);
+		node.setBoolean("enabled", false);
+
+		assertEquals(40.0, node.getNumber("max").orElseThrow());
+		assertFalse(node.getBoolean("enabled").orElseThrow());
+	}
+
+	@Test
+	void 数值原样搬运不会变成字符串() {
+		JsonConfigNode node = new JsonConfigNode(new JsonObject());
+		node.setNumber("old", 25);
+		double value = node.getNumber("old").orElseThrow();
+		node.setNumber("new", value);
+
+		assertTrue(node.raw().getAsJsonObject().get("new").getAsJsonPrimitive().isNumber(),
+				"搬过去的必须是 JSON 数字，而不是字符串");
+	}
 }

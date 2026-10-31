@@ -15,6 +15,14 @@ public final class SnapshotIds {
 	public static UUID stable(String modId, String key) {
 		Objects.requireNonNull(modId, "modId");
 		Objects.requireNonNull(key, "key");
+		if (modId.isEmpty()) {
+			throw new IllegalArgumentException("modId 不能为空");
+		}
+		if (modId.indexOf(':') >= 0) {
+			// 派生串是 modId + ":" + key：modId 里带冒号会与 key 的分隔符混淆，
+			// ("a:b","c") 与 ("a","b:c") 会算出同一 UUID
+			throw new IllegalArgumentException("modId 不得包含冒号: '" + modId + "'");
+		}
 		return UUID.nameUUIDFromBytes((modId + ":" + key).getBytes(StandardCharsets.UTF_8));
 	}
 }

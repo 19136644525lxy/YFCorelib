@@ -109,9 +109,21 @@ public final class ContentNamespace {
 		RegistrationRef<T> blockRef = (RegistrationRef<T>) (RegistrationRef<?>) blocks()
 				.add(path, () -> factory.apply(properties));
 		RegistrationRef<Item> itemRef = withItem
-				? items().add(path, () -> new BlockItem(blockRef.get(), new Item.Properties()))
+				? items().add(path, () -> new BlockItem(requireBlockForItem(blockRef), new Item.Properties()))
 				: null;
 		return new BlockEntry<>(path, blockRef, itemRef);
+	}
+
+	/**
+	 * BlockItem 的工厂在 ITEM 注册时执行，此时方块必须已经注册完毕。
+	 * 不满足时给出可执行的错误信息，而不是一个来源不明的空指针。
+	 */
+	private static <T extends Block> Block requireBlockForItem(RegistrationRef<T> blockRef) {
+		if (!blockRef.isPresent()) {
+			throw new IllegalStateException("生成 BlockItem 时方块 " + blockRef.id()
+					+ " 尚未注册：请确保 BLOCK 先于 ITEM 完成注册，或改用 withItem=false 后自行注册物品");
+		}
+		return blockRef.get();
 	}
 
 	/** 可变音域音效（最常用） */

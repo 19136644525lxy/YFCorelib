@@ -90,8 +90,7 @@ class SimpleRegistryTest {
 	}
 
 	@Test
-	void getOrThrowShouldThrowWhenAbsent() {
-		SimpleRegistry<String> reg = new SimpleRegistry<>("test");
+	void getOrThrowShouldThrowWhenAbsent() {		SimpleRegistry<String> reg = new SimpleRegistry<>("test");
 		assertThrows(NoSuchElementException.class, () -> reg.getOrThrow("missing"));
 		assertTrue(reg.get("missing").isEmpty());
 	}
@@ -120,5 +119,52 @@ class SimpleRegistryTest {
 			assertTrue(ids.contains("id" + i));
 		}
 		assertFalse(reg.isFrozen());
+	}
+
+	@Test
+	void removedListenerShouldStopReceiving() {
+		SimpleRegistry<String> reg = new SimpleRegistry<>("test");
+		AtomicInteger calls = new AtomicInteger();
+		RegistryListener<String> listener = new RegistryListener<String>() {
+			@Override
+			public void onRegister(String id, String value) {
+				calls.incrementAndGet();
+			}
+
+			@Override
+			public void onFreeze() {
+				calls.incrementAndGet();
+			}
+		};
+		reg.addListener(listener);
+		reg.register("a", "A");
+		assertTrue(reg.removeListener(listener));
+		reg.register("b", "B");
+		reg.freeze();
+		assertEquals(1, calls.get());
+		assertFalse(reg.removeListener(listener));
+	}
+
+	@Test
+	void untagShouldRemoveTagAndPruneIndex() {
+		SimpleRegistry<String> reg = new SimpleRegistry<>("test");
+		reg.register("a", "A");
+		reg.register("b", "B");
+		reg.tag("a", "hot");
+		reg.tag("b", "hot");
+		assertTrue(reg.untag("a", "hot"));
+		assertEquals(List.of("B"), reg.byTag("hot"));
+		assertFalse(reg.untag("a", "hot")); // 已经不在标签里
+		assertFalse(reg.untag("a", "cold")); // 标签本身不存在
+		assertTrue(reg.untag("b", "hot"));
+		assertEquals(List.of(), reg.byTag("hot"));
+	}
+
+	@Test
+	void taggedIdMustNotBeNull() {
+		SimpleRegistry<String> reg = new SimpleRegistry<>("test");
+		reg.register("a", "A");
+		assertThrows(NullPointerException.class, () -> reg.tag(null, "hot"));
+		assertThrows(NullPointerException.class, () -> reg.tag("a", null));
 	}
 }

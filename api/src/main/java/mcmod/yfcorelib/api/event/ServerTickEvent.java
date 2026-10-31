@@ -1,7 +1,5 @@
 package mcmod.yfcorelib.api.event;
 
-import mcmod.yfcorelib.api.Side;
-
-/** 服务端/客户端刻事件，side 标明来源 */
-public record ServerTickEvent(Side side) {
+/** 服务端刻事件：每服务端刻末尾发布一次，监听器会在服务端主线程被调用 */
+public record ServerTickEvent() {
 }

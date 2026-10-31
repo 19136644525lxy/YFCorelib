@@ -57,8 +57,10 @@ public abstract class AbstractRegistrar<T> implements Registrar<T> {
 
 	@Override
 	public final boolean contains(String path) {
+		// 与 add() 用同一套路径校验：否则 contains("Bad/Path") 会静默返回 false
+		String clean = RegistryPaths.requirePath(path);
 		synchronized (entries) {
-			return entries.containsKey(path);
+			return entries.containsKey(clean);
 		}
 	}
 

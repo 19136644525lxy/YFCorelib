@@ -13,6 +13,9 @@ import mcmod.yfcorelib.api.event.PlayerJoinEvent;
 import mcmod.yfcorelib.api.event.PlayerLeaveEvent;
 import mcmod.yfcorelib.api.event.ServerStoppingEvent;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * 会话数据默认实现：挂接事件总线，加入即创建、离开即回收。
  * <p>这样两端不需要各自的 Attachment/Capability 注册样板，行为完全一致；
@@ -20,6 +23,8 @@ import mcmod.yfcorelib.api.event.ServerStoppingEvent;
  * 无法满足 {@code PlayerDataStore} 的离线读取语义，故持久化仍由 JSON 仓库负责。</p>
  */
 public final class SimplePlayerSessionStore<T> implements PlayerSessionStore<T>, AutoCloseable {
+	private static final Logger LOG = LoggerFactory.getLogger(SimplePlayerSessionStore.class);
+
 	private final Supplier<T> factory;
 	private final BiConsumer<UUID, T> onEvict;
 	private final ConcurrentHashMap<UUID, T> values = new ConcurrentHashMap<>();
@@ -111,7 +116,12 @@ public final class SimplePlayerSessionStore<T> implements PlayerSessionStore<T>,
 	private void evict(UUID player) {
 		T value = values.remove(player);
 		if (value != null && onEvict != null) {
-			onEvict.accept(player, value);
+			try {
+				onEvict.accept(player, value);
+			} catch (RuntimeException e) {
+				// 单个玩家的转存失败不能让 leave/clear 整体中断（否则其余玩家数据永不回收）
+				LOG.error("会话数据回收回调异常 player={}", player, e);
+			}
 		}
 		online.remove(player);
 	}

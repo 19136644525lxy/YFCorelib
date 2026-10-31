@@ -2,8 +2,11 @@ name: build
 
 on:
   push:
-    branches: [ common ]
+    # 之前只监听 common 分支，push 到主分支不会跑
+    branches: [ main, master, common ]
+    tags: [ 'v*' ]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -18,7 +21,20 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v3
 
-      - name: 执行双端构建与测试
+      # :build 会带上 check，从而执行 checkImportBoundary 与 :api:test
+      - name: 双端构建与测试
         run: |
           chmod +x gradlew
           ./gradlew :api:build :common:build :fabric:build :forge:build --no-daemon
+
+      - name: 上传产物（只留可直接分发的 jar）
+        uses: actions/upload-artifact@v4
+        with:
+          name: jars
+          path: |
+            fabric/build/libs/*.jar
+            forge/build/libs/*.jar
+            !**/*-dev-shadow.jar
+            !**/*-sources.jar
+          if-no-files-found: error
+          retention-days: 14

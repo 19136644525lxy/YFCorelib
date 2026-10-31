@@ -29,9 +29,7 @@ public final class ForgeRegistrarFactory implements RegistrarFactory {
 			throw new IllegalStateException(
 					"Forge 下注册必须在模组构造期间完成（modId=" + modId + "）", ex);
 		}
-		if (bus == null) {
-			throw new IllegalStateException("Forge 模组事件总线不可用：请把注册移到模组构造器内（modId=" + modId + "）");
-		}
+		// getModEventBus() 不会返回 null，原先的 bus == null 分支是死代码
 		return new ForgeRegistrar<>(modId, key, bus);
 	}
 

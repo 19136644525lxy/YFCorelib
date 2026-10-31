@@ -6,10 +6,12 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SimpleConfigManagerTest {
@@ -252,6 +254,75 @@ class SimpleConfigManagerTest {
 		List<ConfigKey<?>> keys = spec().keys();
 		assertEquals("world.enabled", keys.get(0).path());
 		assertEquals("player.exp", keys.get(keys.size() - 1).path());
+	}
+
+	@Test
+	void 旧格式缺版本键时必须补写版本键() {
+		write("test.json", """
+				{
+				  "world": { "enabled": false }
+				}
+				""");
+		SimpleConfigManager manager = new SimpleConfigManager(spec(), source());
+		assertTrue(manager.reload());
+
+		assertEquals(false, manager.get(key("world.enabled", Boolean.class)));
+		// 缺版本键的旧文件如果不落盘，每次 reload 都会重复告警并重新判定迁移起点
+		assertTrue(content("test.json").contains("\"__version\""), "缺版本键必须补写");
+	}
+
+	@Test
+	void 加载失败后拒绝写回以免覆盖用户文件() {
+		ConfigSource broken = new ConfigSource() {
+			@Override
+			public Optional<String> read(String name) {
+				throw new IllegalStateException("模拟读取失败");
+			}
+
+			@Override
+			public void write(String name, String content) {
+				throw new AssertionError("加载失败后不得写盘：" + name);
+			}
+		};
+		SimpleConfigManager manager = new SimpleConfigManager(spec(), broken);
+
+		assertFalse(manager.reload(), "来源异常应返回 false");
+		// 读取仍可用：内存里是纯默认树，不因加载失败而抛错
+		assertEquals(true, manager.get(key("world.enabled", Boolean.class)));
+		// 但绝不能把这份默认树写回磁盘，否则用户原配置被清空
+		assertThrows(IllegalStateException.class, manager::save);
+	}
+
+	@Test
+	void 迁移器版本不前进时中止而不是死循环() {
+		write("test.json", """
+				{
+				  "__version": 0,
+				  "world": { "enabled": false }
+				}
+				""");
+		AtomicInteger calls = new AtomicInteger();
+		ConfigMigrator stuck = new ConfigMigrator() {
+			@Override
+			public int fromVersion() {
+				return 0;
+			}
+
+			@Override
+			public int toVersion() {
+				return 0;
+			}
+
+			@Override
+			public void migrate(ConfigNode node) {
+				calls.incrementAndGet();
+			}
+		};
+		SimpleConfigManager manager = new SimpleConfigManager(spec(), source(), stuck);
+
+		// 没有前进校验时 0 -> 0 的迁移器会让 while 永不退出，挂死调用线程
+		manager.reload();
+		assertEquals(1, calls.get(), "不前进的迁移器只应执行一次就中止");
 	}
 
 	private static <T> ConfigKey<T> key(String path, Class<T> type) {

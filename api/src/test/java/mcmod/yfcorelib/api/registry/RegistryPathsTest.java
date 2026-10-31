@@ -33,4 +33,14 @@ class RegistryPathsTest {
 		assertThrows(IllegalArgumentException.class, () -> RegistryPaths.requirePath("mymod:ruby"));
 		assertThrows(IllegalArgumentException.class, () -> RegistryPaths.requirePath("Ruby"));
 	}
+
+	@Test
+	void rejectsPathWithTraversalOrEmptySegment() {
+		// 字符集本身放行 "/" 与 "."，但这些组合会拼出跳出命名空间的路径
+		assertThrows(IllegalArgumentException.class, () -> RegistryPaths.requirePath("/ruby"));
+		assertThrows(IllegalArgumentException.class, () -> RegistryPaths.requirePath("ruby/"));
+		assertThrows(IllegalArgumentException.class, () -> RegistryPaths.requirePath("magic//ruby"));
+		assertThrows(IllegalArgumentException.class, () -> RegistryPaths.requirePath("magic/../ruby"));
+		assertThrows(IllegalArgumentException.class, () -> RegistryPaths.requirePath("./ruby"));
+	}
 }

@@ -2,6 +2,7 @@ package mcmod.yfcorelib.forge;
 
 import mcmod.yfcorelib.api.Side;
 import mcmod.yfcorelib.api.YFCoreLib;
+import mcmod.yfcorelib.api.event.ClientTickEvent;
 import mcmod.yfcorelib.api.event.PlayerDimensionChangeEvent;
 import mcmod.yfcorelib.api.event.PlayerJoinEvent;
 import mcmod.yfcorelib.api.event.PlayerLeaveEvent;
@@ -29,7 +30,7 @@ public final class ForgeLifecycleBridge {
 		bus.addListener((TickEvent.ServerTickEvent e) -> {
 			if (e.phase == TickEvent.Phase.END) {
 				YFCoreLib.scheduler(Side.SERVER).tick();
-				YFCoreLib.events().post(new ServerTickEvent(Side.SERVER));
+				YFCoreLib.events().post(new ServerTickEvent());
 				if (e.getServer().getTickCount() % 200 == 0) {
 					YFCoreLib.timers().sweep();
 				}
@@ -39,7 +40,7 @@ public final class ForgeLifecycleBridge {
 		bus.addListener((TickEvent.ClientTickEvent e) -> {
 			if (e.phase == TickEvent.Phase.END) {
 				YFCoreLib.scheduler(Side.CLIENT).tick();
-				YFCoreLib.events().post(new ServerTickEvent(Side.CLIENT));
+				YFCoreLib.events().post(new ClientTickEvent());
 			}
 		});
 		bus.addListener((net.minecraftforge.event.server.ServerStartedEvent e) ->
@@ -66,8 +67,13 @@ public final class ForgeLifecycleBridge {
 		if (player instanceof ServerPlayer sp) {
 			PlayerRef ref = new ForgePlayerRef(sp);
 			YFCoreLib.events().post(new PlayerJoinEvent(ref));
-			// 延迟 1 刻标记就绪：等客户端完成初始数据同步
-			YFCoreLib.scheduler(Side.SERVER).delay(1, () -> YFCoreLib.lifecycle().playerReady(ref));
+			// 延迟 1 刻标记就绪：等客户端完成初始数据同步。
+			// 玩家可能在这一刻内就断开（onLogout 已同步执行），此时不能再补发 ready
+			YFCoreLib.scheduler(Side.SERVER).delay(1, () -> {
+				if (ref.isOnline()) {
+					YFCoreLib.lifecycle().playerReady(ref);
+				}
+			});
 		}
 	}
 

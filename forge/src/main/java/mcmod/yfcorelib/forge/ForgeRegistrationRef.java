@@ -29,6 +29,11 @@ final class ForgeRegistrationRef<T> implements RegistrationRef<T> {
 
 	@Override
 	public T get() {
+		if (!object.isPresent()) {
+			// RegistryObject.get() 未注册时抛裸 NPE，看不出是哪个条目、什么原因
+			throw new IllegalStateException(
+					"注册条目尚未完成注册，禁止在模组构造期取值: " + object.getId());
+		}
 		return object.get();
 	}
 

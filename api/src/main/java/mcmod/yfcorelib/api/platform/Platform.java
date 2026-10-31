@@ -27,6 +27,14 @@ public interface Platform {
 
 	Path modsDir();
 
+	/**
+	 * 当前存档根目录（{@code saves/<世界名>}）；没有运行中的服务器时为空。
+	 * <p>需要"跟着存档走"的数据（如计时器）应优先写在这里，否则多个存档会互相覆盖。</p>
+	 */
+	default Optional<Path> worldDir() {
+		return Optional.empty();
+	}
+
 	/** 是否加载了指定模组（软依赖探测） */
 	boolean isModLoaded(String modId);
 

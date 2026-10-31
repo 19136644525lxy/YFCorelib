@@ -4,12 +4,13 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** EventBus 默认实现：每类事件一条 COW 列表，注册/退订与投递并发安全 */
 public final class SimpleEventBus implements EventBus {
-	private static final Logger LOG = Logger.getLogger(SimpleEventBus.class.getName());
+	private static final Logger LOG = LoggerFactory.getLogger(SimpleEventBus.class);
 
 	private final ConcurrentHashMap<Class<?>, CopyOnWriteArrayList<Consumer<?>>> listeners = new ConcurrentHashMap<>();
 
@@ -38,7 +39,7 @@ public final class SimpleEventBus implements EventBus {
 			try {
 				((Consumer<E>) raw).accept(event);
 			} catch (Throwable ex) {
-				LOG.log(Level.SEVERE, "事件监听器异常 event=" + event.getClass().getName(), ex);
+				LOG.error("事件监听器异常 event={}", event.getClass().getName(), ex);
 			}
 		}
 	}

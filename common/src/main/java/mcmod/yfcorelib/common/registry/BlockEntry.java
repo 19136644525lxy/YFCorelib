@@ -33,8 +33,9 @@ public final class BlockEntry<T extends Block> {
 		return block.get();
 	}
 
-	/** 方块对应的物品实例；未生成 BlockItem 时为空 */
+	/** 方块对应的物品实例；未生成 BlockItem 或 Forge 尚未注册完成时为空 */
 	public Optional<Item> asItem() {
-		return item().map(RegistrationRef::get);
+		// Forge 延迟注册：注册事件前 get() 会抛错，这里先判存在性
+		return item().filter(RegistrationRef::isPresent).map(RegistrationRef::get);
 	}
 }
